@@ -1,0 +1,65 @@
+#pragma once
+
+#include <Arduino.h>
+#include "Sensors.h"
+
+// User-adjustable targets that drive the control logic. A plain snapshot value
+// type so it can be passed safely from the ISR-owned menu state into update().
+struct Setpoints
+{
+    float targetTemp = 0.0f;     // degrees C
+    float targetHumidity = 0.0f; // percent
+    float targetCeiling = 0.0f;  // hard over-temp cutoff, degrees C
+    long runMinutes = 0;         // shut everything off after this many minutes (0 = no limit)
+};
+
+// Resolved on/off state of every actuator, plus the reasons behind it. Read by
+// the display; written only by Controller::update().
+struct ActuatorState
+{
+    bool fanOn = false;
+    bool heaterOn = false;
+    bool humidOn = false;
+    bool heaterFault = false;   // sensor invalid / over ceiling -> heater forced off
+    bool heaterLockout = false; // tripped max-on time, in forced cooldown
+    bool runComplete = false;   // run duration elapsed -> everything off
+    bool stopped = false;       // manually stopped by the user -> everything off
+
+    // True when the chamber is halted for any reason and needs a restart.
+    bool halted() const { return runComplete || stopped; }
+};
+
+// Drives the fan, heater and humidifier from the current readings and setpoints.
+// Encapsulates the hysteresis, over-temperature safety and run-timer behaviour.
+class Controller
+{
+public:
+    // Configure output pins and drive them to a safe initial state.
+    void begin();
+
+    // Recompute and apply every actuator output. Call periodically.
+    void update(const Setpoints &sp, const SensorReadings &s);
+
+    // Stop the chamber now: shut every actuator off and stay off until restart().
+    void stop();
+
+    // Restart the run: clear the halted latch (finished or stopped) and reset
+    // the run timer to zero so a new run can begin without a power cycle.
+    void restart();
+
+    const ActuatorState &state() const { return state_; }
+
+    // millis() timestamp the current run started at (for elapsed/left display).
+    unsigned long runStartMs() const { return runStartMs_; }
+
+private:
+    ActuatorState state_;
+
+    // Run-timer baseline: elapsed time is measured from here, not from boot.
+    unsigned long runStartMs_ = 0;
+
+    // Heater run-time tracking for the max-on backstop.
+    bool heaterWasOn_ = false;
+    unsigned long heaterOnSince_ = 0;
+    unsigned long lockoutSince_ = 0;
+};
