@@ -67,8 +67,9 @@ void loop()
         menu.requestRedraw(); // refresh display with new data
 
         const SensorReadings &s = sensors.readings();
-        Serial.printf("Temp: %.2f C (set %.1f) | Humid: %.1f%% (set %.0f)\n",
-                      s.dsTemp, sp.targetTemp, s.humidity, sp.targetHumidity);
+        Serial.printf("Temp: %.2f C (set %.1f) | Humid: %.1f%% (set %.0f) | Fan: %u%%\n",
+                      s.dsTemp, sp.targetTemp, s.humidity, sp.targetHumidity,
+                      controller.state().fanDuty);
     }
 
     // Read the button (short press = tap, 5 s hold = stop).

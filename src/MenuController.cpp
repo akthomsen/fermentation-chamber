@@ -4,7 +4,7 @@
 
 // Labels shown in the screen title bar, indexed by MenuScreen.
 static const char *const kMenuLabels[SCREEN_COUNT] = {
-    "Overview", "Sensors", "Actuators", "Set Temp", "Set Humid", "Max Temp", "Run Time"};
+    "Overview", "Sensors", "Actuators", "Set Temp", "Set Humid", "Max Temp", "Set Fan", "Run Time"};
 
 // Quadrature decode table: maps a 4-bit (prev<<2 | now) state to a step.
 // Invalid transitions (contact bounce) decode to 0, so noise is ignored.
@@ -16,6 +16,7 @@ MenuController::MenuController()
     : targetTemp_(DEFAULT_TARGET_TEMP),
       targetHumidity_(DEFAULT_TARGET_HUMIDITY),
       targetCeiling_(DEFAULT_CEILING),
+      fanManualPct_(0), // 0 = AUTO (temp-proportional fan)
       runMinutes_(DEFAULT_RUN_MINUTES)
 {
     instance_ = this;
@@ -44,6 +45,7 @@ Setpoints MenuController::setpoints() const
     sp.targetTemp = targetTemp_;
     sp.targetHumidity = targetHumidity_;
     sp.targetCeiling = targetCeiling_;
+    sp.fanManualPct = fanManualPct_;
     sp.runMinutes = runMinutes_;
     return sp;
 }
@@ -75,7 +77,8 @@ bool MenuController::consumeStop()
 bool MenuController::isEditableScreen(int screen) const
 {
     return screen == SCREEN_SET_TEMP || screen == SCREEN_SET_HUMID ||
-           screen == SCREEN_SET_CEIL || screen == SCREEN_SET_RUN;
+           screen == SCREEN_SET_CEIL || screen == SCREEN_SET_FAN ||
+           screen == SCREEN_SET_RUN;
 }
 
 void IRAM_ATTR MenuController::encoderTrampoline()
@@ -122,6 +125,18 @@ void IRAM_ATTR MenuController::onEncoder()
     case SCREEN_SET_CEIL:
         targetCeiling_ = targetCeiling_ + dir * 0.5f * mult;
         break;
+    case SCREEN_SET_FAN:
+    {
+        // One knob spans AUTO + a manual 40..100% band. Turning below the floor
+        // drops into AUTO; turning up from AUTO enters manual at the floor.
+        int v = fanManualPct_ + dir * 5 * mult; // 5% steps
+        if (v >= FAN_DUTY_MAX_PCT)
+            v = FAN_DUTY_MAX_PCT;
+        else if (v < FAN_DUTY_MIN_PCT)
+            v = (dir < 0) ? 0 : FAN_DUTY_MIN_PCT; // below floor -> AUTO when turning down
+        fanManualPct_ = v;
+        break;
+    }
     case SCREEN_SET_RUN:
         runMinutes_ = runMinutes_ + dir * 5 * mult; // 5 min steps
         if (runMinutes_ < 0)

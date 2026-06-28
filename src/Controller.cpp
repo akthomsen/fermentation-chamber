@@ -4,15 +4,24 @@
 
 void Controller::begin()
 {
-    pinMode(PIN_FAN, OUTPUT);
     pinMode(PIN_HEATER, OUTPUT);
     pinMode(PIN_HUMIDIFIER, OUTPUT);
 
-    digitalWrite(PIN_FAN, FAN_ON); // fan always on while running
+    // Fan is PWM-driven via LEDC (core 3.x API). Attaching a pin auto-allocates
+    // a channel; we then write an 8-bit duty (0..255) with ledcWrite().
+    ledcAttach(PIN_FAN, FAN_PWM_FREQ, FAN_PWM_RES_BITS);
     digitalWrite(PIN_HEATER, HEATER_OFF);
     digitalWrite(PIN_HUMIDIFIER, HUMIDIFIER_OFF);
 
+    kickFan(); // pulse to full so the fan reliably spins up; update() sets the real duty next tick
+
     runStartMs_ = millis();
+}
+
+void Controller::kickFan()
+{
+    ledcWrite(PIN_FAN, 255);
+    delay(FAN_KICK_MS);
 }
 
 void Controller::stop()
@@ -21,7 +30,8 @@ void Controller::stop()
 
     // Drive outputs off immediately so a stop takes effect without waiting.
     state_.fanOn = state_.heaterOn = state_.humidOn = false;
-    digitalWrite(PIN_FAN, FAN_OFF);
+    state_.fanDuty = 0;
+    ledcWrite(PIN_FAN, 0);
     digitalWrite(PIN_HEATER, HEATER_OFF);
     digitalWrite(PIN_HUMIDIFIER, HUMIDIFIER_OFF);
 }
@@ -33,6 +43,8 @@ void Controller::restart()
     heaterWasOn_ = false;
     heaterOnSince_ = 0;
     lockoutSince_ = 0;
+
+    kickFan(); // spin the fan back up cleanly after a halt
 }
 
 void Controller::update(const Setpoints &sp, const SensorReadings &s)
@@ -48,15 +60,12 @@ void Controller::update(const Setpoints &sp, const SensorReadings &s)
     if (state_.halted())
     {
         state_.fanOn = state_.heaterOn = state_.humidOn = false;
-        digitalWrite(PIN_FAN, FAN_OFF);
+        state_.fanDuty = 0;
+        ledcWrite(PIN_FAN, 0);
         digitalWrite(PIN_HEATER, HEATER_OFF);
         digitalWrite(PIN_HUMIDIFIER, HUMIDIFIER_OFF);
         return;
     }
-
-    // Fan is always on during the run.
-    state_.fanOn = true;
-    digitalWrite(PIN_FAN, FAN_ON);
 
     // Expire the cooldown lockout once enough time has passed.
     if (state_.heaterLockout && now - lockoutSince_ > HEAT_COOLDOWN_MS)
@@ -80,6 +89,29 @@ void Controller::update(const Setpoints &sp, const SensorReadings &s)
     }
     const bool tempValid = tempCount > 0;
     const float controlTemp = tempValid ? tempSum / tempCount : 0.0f;
+
+    // Fan speed (PWM duty %). Manual override wins; otherwise AUTO ramps the
+    // speed with how far the aggregate temperature sits from target. The duty
+    // never drops below the floor during a run, so air keeps circulating and the
+    // fan cannot stall. Manual values are already clamped to [floor, max].
+    int fanPct;
+    if (sp.fanManualPct >= FAN_DUTY_MIN_PCT)
+    {
+        fanPct = sp.fanManualPct > FAN_DUTY_MAX_PCT ? FAN_DUTY_MAX_PCT : sp.fanManualPct;
+    }
+    else if (!tempValid)
+    {
+        fanPct = FAN_DUTY_MAX_PCT; // blind -> full circulation
+    }
+    else
+    {
+        const float deltaC = fabsf(controlTemp - sp.targetTemp);
+        const float frac = constrain(deltaC / FAN_RAMP_SPAN_C, 0.0f, 1.0f);
+        fanPct = FAN_DUTY_MIN_PCT + (int)((FAN_DUTY_MAX_PCT - FAN_DUTY_MIN_PCT) * frac + 0.5f);
+    }
+    state_.fanOn = true;
+    state_.fanDuty = (uint8_t)fanPct;
+    ledcWrite(PIN_FAN, (fanPct * 255) / 100); // 8-bit duty
 
     // Normal hysteresis, but shut off slightly BELOW target so residual heat
     // carries the temperature the rest of the way up.

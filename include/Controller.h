@@ -11,6 +11,7 @@ struct Setpoints
     float targetHumidity = 0.0f; // percent
     float targetCeiling = 0.0f;  // hard over-temp cutoff, degrees C
     long runMinutes = 0;         // shut everything off after this many minutes (0 = no limit)
+    int fanManualPct = 0;        // <FAN_DUTY_MIN_PCT = AUTO (temp-proportional); else manual duty %
 };
 
 // Resolved on/off state of every actuator, plus the reasons behind it. Read by
@@ -18,6 +19,7 @@ struct Setpoints
 struct ActuatorState
 {
     bool fanOn = false;
+    uint8_t fanDuty = 0; // live fan speed, percent (0..100)
     bool heaterOn = false;
     bool humidOn = false;
     bool heaterFault = false;   // sensor invalid / over ceiling -> heater forced off
@@ -53,6 +55,10 @@ public:
     unsigned long runStartMs() const { return runStartMs_; }
 
 private:
+    // Brief full-speed pulse to overcome fan stiction at the start of a run.
+    // Blocks for FAN_KICK_MS, so only call it from one-shot paths (begin/restart).
+    void kickFan();
+
     ActuatorState state_;
 
     // Run-timer baseline: elapsed time is measured from here, not from boot.

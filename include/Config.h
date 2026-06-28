@@ -24,12 +24,24 @@ constexpr int PIN_HUMIDIFIER = 23; // humidifier
 constexpr int PIN_HEATER = 12;     // heater relay
 
 // On/off levels (flip these if a device is wired the other way round)
-constexpr int FAN_ON = HIGH;
-constexpr int FAN_OFF = LOW;
+constexpr int FAN_ON = HIGH; // documents active-high fan MOSFET; the fan is now
+constexpr int FAN_OFF = LOW;  // PWM-driven (see Fan PWM below) but these record wiring
 constexpr int HEATER_ON = HIGH;
 constexpr int HEATER_OFF = LOW;
 constexpr int HUMIDIFIER_ON = HIGH;
 constexpr int HUMIDIFIER_OFF = LOW;
+
+// --- Fan PWM ---
+// The fan MOSFET is driven with LEDC PWM instead of plain on/off. 25 kHz sits
+// above human hearing, so the motor/MOSFET does not whine audibly. Duty is
+// active-high (255 = full speed, 0 = off) to match FAN_ON above; invert the
+// ledcWrite value only if the MOSFET is ever rewired active-low.
+constexpr int FAN_PWM_FREQ = 25000;     // Hz, inaudible
+constexpr int FAN_PWM_RES_BITS = 8;     // 0..255 duty range
+constexpr int FAN_DUTY_MIN_PCT = 40;    // min circulation floor (above stall); also lowest manual step
+constexpr int FAN_DUTY_MAX_PCT = 100;   // full speed
+constexpr float FAN_RAMP_SPAN_C = 2.0f; // aggregate-temp delta at which the fan hits full speed
+constexpr unsigned long FAN_KICK_MS = 300; // full-speed kick at run start to beat stiction
 
 // --- I2C addresses ---
 // Note: the Adafruit BME280 library already #defines BME280_ADDRESS, so the

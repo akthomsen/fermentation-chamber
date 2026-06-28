@@ -13,6 +13,7 @@ enum MenuScreen : int
     SCREEN_SET_TEMP,
     SCREEN_SET_HUMID,
     SCREEN_SET_CEIL,
+    SCREEN_SET_FAN,
     SCREEN_SET_RUN,
     SCREEN_COUNT
 };
@@ -83,6 +84,7 @@ private:
     volatile float targetTemp_;
     volatile float targetHumidity_;
     volatile float targetCeiling_;
+    volatile int fanManualPct_; // <FAN_DUTY_MIN_PCT = AUTO; else manual duty %
     volatile long runMinutes_;
 
     // --- Encoder decode state ---

@@ -77,6 +77,9 @@ void Display::render(int screen, bool editing,
     case SCREEN_SET_CEIL:
         drawSetCeiling(sp, editing);
         break;
+    case SCREEN_SET_FAN:
+        drawSetFan(sp, editing);
+        break;
     case SCREEN_SET_RUN:
         drawSetRun(sp, act, editing, runStartMs);
         break;
@@ -138,9 +141,10 @@ void Display::drawActuators(const Setpoints &sp, const ActuatorState &act)
                              : act.heaterLockout ? "COOLDN"
                              : act.heaterOn ? "ON"
                                             : "OFF";
+    const char *fanMode = sp.fanManualPct >= FAN_DUTY_MIN_PCT ? "M" : "A";
     oled_.setTextSize(1);
     oled_.setCursor(0, 16);
-    oled_.printf("Fan       : %s", act.fanOn ? "ON" : "OFF");
+    oled_.printf("Fan       : %d%% %s", act.fanDuty, fanMode);
     oled_.setCursor(0, 28);
     oled_.printf("Heater    : %s", heaterStat);
     oled_.setCursor(0, 40);
@@ -175,6 +179,17 @@ void Display::drawSetCeiling(const Setpoints &sp, bool editing)
     oled_.setTextSize(2);
     oled_.setCursor(0, 24);
     oled_.printf("%.1f C", sp.targetCeiling);
+    drawEditPrompt(oled_, editing, 56);
+}
+
+void Display::drawSetFan(const Setpoints &sp, bool editing)
+{
+    oled_.setTextSize(2);
+    oled_.setCursor(0, 24);
+    if (sp.fanManualPct < FAN_DUTY_MIN_PCT)
+        oled_.print("AUTO");
+    else
+        oled_.printf("%d %%", sp.fanManualPct);
     drawEditPrompt(oled_, editing, 56);
 }
 
