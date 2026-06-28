@@ -50,7 +50,7 @@ constexpr float HEATER_OFFSET = 0.5f;                           // turn off this
 constexpr float DEFAULT_CEILING = 45.0f;                        // default hard over-temp cutoff (editable in menu)
 constexpr float TEMP_VALID_MIN = 0.0f;                          // below this = sensor fault (DS18B20 returns -127 if unplugged)
 constexpr float TEMP_VALID_MAX = 70.0f;                         // above this = sensor fault / runaway
-constexpr unsigned long MAX_HEAT_MS = 15UL * 60UL * 1000UL;     // max continuous heater-on time (15 min)
+constexpr unsigned long MAX_HEAT_MS = 20UL * 60UL * 1000UL;     // max continuous heater-on time (20 min)
 constexpr unsigned long HEAT_COOLDOWN_MS = 5UL * 60UL * 1000UL; // forced off period after a max-on trip (5 min)
 
 // --- Default setpoints ---

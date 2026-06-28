@@ -62,16 +62,34 @@ void Controller::update(const Setpoints &sp, const SensorReadings &s)
     if (state_.heaterLockout && now - lockoutSince_ > HEAT_COOLDOWN_MS)
         state_.heaterLockout = false;
 
+    // Control on the average of the two temperature sensors. A sensor is
+    // ignored if it reads NaN or sits outside the valid band (a DS18B20 returns
+    // -127 when unplugged), so a single failed sensor neither drags the average
+    // off nor masks the other one. With no usable sensor the heater is faulted.
+    float tempSum = 0.0f;
+    int tempCount = 0;
+    if (!isnan(s.dsTemp) && s.dsTemp >= TEMP_VALID_MIN && s.dsTemp <= TEMP_VALID_MAX)
+    {
+        tempSum += s.dsTemp;
+        ++tempCount;
+    }
+    if (!isnan(s.bmeTemp) && s.bmeTemp >= TEMP_VALID_MIN && s.bmeTemp <= TEMP_VALID_MAX)
+    {
+        tempSum += s.bmeTemp;
+        ++tempCount;
+    }
+    const bool tempValid = tempCount > 0;
+    const float controlTemp = tempValid ? tempSum / tempCount : 0.0f;
+
     // Normal hysteresis, but shut off slightly BELOW target so residual heat
     // carries the temperature the rest of the way up.
-    if (s.dsTemp <= sp.targetTemp - HEATER_OFFSET - HYSTERESIS)
+    if (tempValid && controlTemp <= sp.targetTemp - HEATER_OFFSET - HYSTERESIS)
         state_.heaterOn = true;
-    else if (s.dsTemp >= sp.targetTemp - HEATER_OFFSET)
+    else if (controlTemp >= sp.targetTemp - HEATER_OFFSET)
         state_.heaterOn = false;
 
-    // Safety: bad sensor reading or above the hard ceiling -> force off.
-    state_.heaterFault = (s.dsTemp < TEMP_VALID_MIN) || (s.dsTemp > TEMP_VALID_MAX) ||
-                         (s.dsTemp >= sp.targetCeiling);
+    // Safety: no usable sensor or above the hard ceiling -> force off.
+    state_.heaterFault = !tempValid || (controlTemp >= sp.targetCeiling);
     if (state_.heaterFault || state_.heaterLockout)
         state_.heaterOn = false;
 

@@ -92,10 +92,12 @@ void Display::drawOverview(const Setpoints &sp, const SensorReadings &s, const A
 {
     oled_.setTextSize(1);
     oled_.setCursor(0, 16);
-    oled_.printf("Temp %.1f / %.1f C", s.dsTemp, sp.targetTemp);
-    oled_.setCursor(0, 30);
-    oled_.printf("Hum  %.0f / %.0f %%", s.humidity, sp.targetHumidity);
-    oled_.setCursor(0, 48);
+    oled_.printf("DS  %.1f / %.1f C", s.dsTemp, sp.targetTemp);
+    oled_.setCursor(0, 28);
+    oled_.printf("BME %.1f / %.1f C", s.bmeTemp, sp.targetTemp);
+    oled_.setCursor(0, 40);
+    oled_.printf("Hum %.0f / %.0f %%", s.humidity, sp.targetHumidity);
+    oled_.setCursor(0, 52);
 
     if (act.stopped)
     {
