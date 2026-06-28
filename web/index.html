@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fermentation chamber</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mqtt@5/dist/mqtt.min.js"></script>
+  <style>
+    :root {
+      --bg:#0f1115; --card:#1a1d24; --line:#2a2f3a; --txt:#e6e8ec;
+      --muted:#8b929f; --accent:#d85a30; --blue:#4a90e2; --ok:#1d9e75; --bad:#b32424;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin:0; background:var(--bg); color:var(--txt);
+      font:15px/1.5 system-ui, -apple-system, sans-serif; padding:16px; max-width:980px;
+      margin-inline:auto;
+    }
+    header { display:flex; align-items:baseline; gap:12px; margin-bottom:14px; flex-wrap:wrap; }
+    h1 { font-size:1.25rem; margin:0; }
+    #status { font-size:.85rem; color:var(--muted); }
+    #status.up   { color:var(--ok); }
+    #status.down { color:var(--bad); }
+    .grid { display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); margin-bottom:12px; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
+    .card h2 { font-size:.72rem; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:0 0 6px; font-weight:600; }
+    .stat { font-size:28px; font-weight:500; font-variant-numeric:tabular-nums; }
+    .stat small { font-size:14px; color:var(--muted); }
+    .sub { font-size:.8rem; color:var(--muted); margin-top:2px; }
+    .dots { display:flex; gap:16px; margin-top:4px; }
+    .dotrow { display:flex; align-items:center; gap:7px; font-size:.85rem; color:var(--muted); }
+    .dot { width:11px; height:11px; border-radius:50%; background:var(--line); transition:background .15s; }
+    .dot.on { background:var(--accent); box-shadow:0 0 8px var(--accent); }
+    #chart-card { padding:14px 6px 6px 6px; }
+    #chart { max-width:100%; overflow-x:auto; }
+    .controls { display:flex; flex-wrap:wrap; gap:18px; align-items:flex-end; }
+    .field { display:flex; flex-direction:column; gap:5px; }
+    .field label { font-size:.78rem; color:var(--muted); }
+    .stepper { display:flex; align-items:stretch; }
+    .stepper button { width:42px; font-size:20px; background:var(--bg); color:var(--txt); border:1px solid var(--line); }
+    .stepper button:first-child { border-radius:8px 0 0 8px; }
+    .stepper button:last-child  { border-radius:0 8px 8px 0; }
+    .stepper input {
+      width:74px; text-align:center; font-size:18px; font-variant-numeric:tabular-nums;
+      background:var(--bg); color:var(--txt); border:1px solid var(--line); border-left:0; border-right:0;
+    }
+    button { cursor:pointer; padding:10px 18px; border:0; border-radius:8px; background:var(--accent); color:#fff; font-size:15px; }
+    button:active { transform:translateY(1px); }
+    button.ghost { background:transparent; color:var(--txt); border:1px solid var(--line); }
+    #apply { align-self:flex-end; }
+    #power { min-width:120px; }
+    #power.stopped { background:var(--ok); }
+    .spacer { flex:1; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Fermentation chamber</h1>
+    <span id="status" class="down">connecting…</span>
+  </header>
+
+  <!-- Status cards (driven by retained fermenter/state) -->
+  <div class="grid">
+    <div class="card">
+      <h2>Temperature</h2>
+      <div class="stat"><span id="v-temp">–</span><small> °C</small></div>
+      <div class="sub">set <span id="v-temp-set">–</span> °C · ceil <span id="v-ceil">–</span></div>
+    </div>
+    <div class="card">
+      <h2>Humidity</h2>
+      <div class="stat"><span id="v-hum">–</span><small> %</small></div>
+      <div class="sub">set <span id="v-hum-set">–</span> %</div>
+    </div>
+    <div class="card">
+      <h2>Fan</h2>
+      <div class="stat"><span id="v-fan">–</span><small> %</small></div>
+    </div>
+    <div class="card">
+      <h2>Actuators</h2>
+      <div class="dots">
+        <span class="dotrow"><span id="dot-heater" class="dot"></span>Heater</span>
+        <span class="dotrow"><span id="dot-humid" class="dot"></span>Humid.</span>
+      </div>
+      <div class="sub" id="v-halted" style="margin-top:8px">—</div>
+    </div>
+  </div>
+
+  <!-- Live chart (driven by un-retained fermenter/telemetry) -->
+  <div class="card" id="chart-card">
+    <div id="chart"></div>
+  </div>
+
+  <!-- Controls: publish to fermenter/cmd/setpoint and fermenter/cmd/control -->
+  <div class="card" style="margin-top:12px">
+    <h2>Controls</h2>
+    <div class="controls">
+      <div class="field">
+        <label for="in-temp">Target temp °C</label>
+        <div class="stepper">
+          <button type="button" data-step="-0.5" data-target="in-temp">−</button>
+          <input id="in-temp" type="number" step="0.5" min="0" max="45">
+          <button type="button" data-step="0.5" data-target="in-temp">+</button>
+        </div>
+      </div>
+      <div class="field">
+        <label for="in-hum">Target humidity %</label>
+        <div class="stepper">
+          <button type="button" data-step="-1" data-target="in-hum">−</button>
+          <input id="in-hum" type="number" step="1" min="0" max="100">
+          <button type="button" data-step="1" data-target="in-hum">+</button>
+        </div>
+      </div>
+      <button id="apply">Apply</button>
+      <span class="spacer"></span>
+      <button id="power" class="ghost">Stop</button>
+    </div>
+  </div>
+
+  <script>
+    // ---- elements --------------------------------------------------------
+    const $ = (id) => document.getElementById(id);
+    const statusEl = $("status");
+    const tempInput = $("in-temp"), humInput = $("in-hum");
+    const powerBtn = $("power");
+    let halted = false; // last reported halted state, drives the power button
+
+    // Inputs the user has edited but not yet applied. While an input is dirty we
+    // stop seeding it from fermenter/state, so the ~1 Hz state echo can't clobber
+    // a value mid-edit. Cleared on Apply, after which the device echo re-syncs it.
+    const dirty = new Set();
+    [tempInput, humInput].forEach((el) =>
+      el.addEventListener("input", () => dirty.add(el.id)));
+
+    function setStatus(text, up) {
+      statusEl.textContent = text;
+      statusEl.className = up ? "up" : "down";
+    }
+
+    // ---- uPlot: dual scale (°C left, % right) ----------------------------
+    const MAX = 600;            // ~10 min @ 1 msg/s
+    let xs = [], temp = [], hum = [];
+    function chartWidth() { return Math.max(280, $("chart-card").clientWidth - 12); }
+    const opts = {
+      width: chartWidth(), height: 320,
+      scales: { x: { time: true }, C: {}, "%": {} },
+      series: [
+        {},
+        { label: "DS18B20 °C", stroke: "#d85a30", scale: "C", width: 2 },
+        { label: "Humidity %", stroke: "#4a90e2", scale: "%", width: 2 },
+      ],
+      axes: [
+        { stroke: "#8b929f", grid: { stroke: "#2a2f3a" }, ticks: { stroke: "#2a2f3a" } },
+        { scale: "C", stroke: "#d85a30", grid: { stroke: "#2a2f3a" }, ticks: { stroke: "#2a2f3a" } },
+        { scale: "%", side: 1, stroke: "#4a90e2", grid: { show: false } },
+      ],
+    };
+    const u = new uPlot(opts, [xs, temp, hum], $("chart"));
+    addEventListener("resize", () => u.setSize({ width: chartWidth(), height: 320 }));
+
+    // ---- telemetry: live points ------------------------------------------
+    function pushPoint(d) {
+      xs.push(Date.now() / 1000); temp.push(d.dsTemp); hum.push(d.humidity);
+      if (xs.length > MAX) { xs.shift(); temp.shift(); hum.shift(); }
+      u.setData([xs, temp, hum]);
+      $("v-temp").textContent = d.dsTemp.toFixed(2);
+      $("v-hum").textContent  = d.humidity.toFixed(1);
+    }
+
+    // ---- state: status cards + seed controls (without fighting the user) -
+    function applyState(d) {
+      $("v-temp-set").textContent = d.targetTemp.toFixed(1);
+      $("v-hum-set").textContent  = d.targetHumidity.toFixed(0);
+      $("v-ceil").textContent     = d.targetCeiling.toFixed(1);
+      $("v-fan").textContent      = d.fanDuty;
+      $("dot-heater").classList.toggle("on", d.heaterOn);
+      $("dot-humid").classList.toggle("on", d.humidOn);
+
+      halted = d.halted;
+      $("v-halted").textContent = halted ? "⏸ Halted" : "▶ Running";
+      powerBtn.textContent = halted ? "Start" : "Stop";
+      powerBtn.classList.toggle("stopped", halted);
+
+      // Only seed an input the user has not edited since the last Apply.
+      if (!dirty.has("in-temp")) tempInput.value = d.targetTemp;
+      if (!dirty.has("in-hum"))  humInput.value  = d.targetHumidity;
+    }
+
+    // ---- MQTT over WebSocket ---------------------------------------------
+    const url = `ws://${location.hostname}:9001`;
+    const client = mqtt.connect(url);
+    client.on("connect", () => {
+      setStatus(`connected — ${url}`, true);
+      client.subscribe("fermenter/telemetry");
+      client.subscribe("fermenter/state");
+    });
+    client.on("reconnect", () => setStatus("reconnecting…", false));
+    client.on("close",     () => setStatus("disconnected", false));
+    client.on("error",     (e) => setStatus("error: " + e.message, false));
+    client.on("message", (topic, payload) => {
+      let d; try { d = JSON.parse(payload.toString()); } catch { return; }
+      if (topic === "fermenter/telemetry") pushPoint(d);
+      else if (topic === "fermenter/state") applyState(d);
+    });
+
+    // ---- controls --------------------------------------------------------
+    document.querySelectorAll(".stepper button").forEach((b) => {
+      b.addEventListener("click", () => {
+        const input = $(b.dataset.target);
+        input.value = (parseFloat(input.value || 0) + parseFloat(b.dataset.step)).toFixed(1);
+        dirty.add(input.id); // a stepper press is an edit too
+      });
+    });
+
+    $("apply").addEventListener("click", () => {
+      // Confirmation is the fermenter/state echo, not this click.
+      client.publish("fermenter/cmd/setpoint", JSON.stringify({
+        targetTemp: parseFloat(tempInput.value),
+        targetHumidity: parseFloat(humInput.value),
+      }));
+      dirty.clear(); // hand the fields back to the device's echoed truth
+    });
+
+    powerBtn.addEventListener("click", () => {
+      // Mirrors the physical knob: start (resets run timer) vs stop.
+      client.publish("fermenter/cmd/control", JSON.stringify({
+        action: halted ? "start" : "stop",
+      }));
+    });
+  </script>
+</body>
+</html>

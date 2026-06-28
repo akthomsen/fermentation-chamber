@@ -48,6 +48,13 @@ public:
     // Controller without worrying about concurrent ISR updates.
     Setpoints setpoints() const;
 
+    // Apply a setpoint from outside the encoder (e.g. a remote MQTT command).
+    // Single aligned 32-bit stores are atomic on the C6, so these are safe to
+    // call from loop() context even though the encoder ISR also writes the
+    // same fields -- no critical section required.
+    void setTargetTemp(float c) { targetTemp_ = c; }
+    void setTargetHumidity(float p) { targetHumidity_ = p; }
+
     // Returns true (and clears the flag) when the display needs redrawing.
     bool consumeRedraw();
 
