@@ -60,7 +60,7 @@ constexpr float HYSTERESIS = 0.5f; // dead-band to stop rapid switching
 
 // --- Heater safety / behaviour ---
 constexpr float HEATER_OFFSET = 0.5f;                           // turn off this far BELOW target (residual heat keeps rising)
-constexpr float DEFAULT_CEILING = 45.0f;                        // default hard over-temp cutoff (editable in menu)
+constexpr float DEFAULT_CEILING = 60.0f;                        // default hard over-temp cutoff (editable in menu)
 constexpr float TEMP_VALID_MIN = 0.0f;                          // below this = sensor fault (DS18B20 returns -127 if unplugged)
 constexpr float TEMP_VALID_MAX = 70.0f;                         // above this = sensor fault / runaway
 constexpr unsigned long MAX_HEAT_MS = 60UL * 60UL * 1000UL;     // max continuous heater-on time (60 min)
