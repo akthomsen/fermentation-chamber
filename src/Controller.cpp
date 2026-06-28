@@ -80,9 +80,10 @@ void Controller::update(const Setpoints &sp, const SensorReadings &s)
     // ignored if it reads NaN or sits outside the valid band (a DS18B20 returns
     // -127 when unplugged), so a single failed sensor neither drags the average
     // off nor masks the other one. With no usable sensor the heater is faulted.
+    const bool dsValid = !isnan(s.dsTemp) && s.dsTemp >= TEMP_VALID_MIN && s.dsTemp <= TEMP_VALID_MAX;
     float tempSum = 0.0f;
     int tempCount = 0;
-    if (!isnan(s.dsTemp) && s.dsTemp >= TEMP_VALID_MIN && s.dsTemp <= TEMP_VALID_MAX)
+    if (dsValid)
     {
         tempSum += s.dsTemp;
         ++tempCount;
@@ -95,29 +96,6 @@ void Controller::update(const Setpoints &sp, const SensorReadings &s)
     const bool tempValid = tempCount > 0;
     const float controlTemp = tempValid ? tempSum / tempCount : 0.0f;
 
-    // Fan speed (PWM duty %). Manual override wins; otherwise AUTO ramps the
-    // speed with how far the aggregate temperature sits from target. The duty
-    // never drops below the floor during a run, so air keeps circulating and the
-    // fan cannot stall. Manual values are already clamped to [floor, max].
-    int fanPct;
-    if (sp.fanManualPct >= FAN_DUTY_MIN_PCT)
-    {
-        fanPct = sp.fanManualPct > FAN_DUTY_MAX_PCT ? FAN_DUTY_MAX_PCT : sp.fanManualPct;
-    }
-    else if (!tempValid)
-    {
-        fanPct = FAN_DUTY_MAX_PCT; // blind -> full circulation
-    }
-    else
-    {
-        const float deltaC = fabsf(controlTemp - sp.targetTemp);
-        const float frac = constrain(deltaC / FAN_RAMP_SPAN_C, 0.0f, 1.0f);
-        fanPct = FAN_DUTY_MIN_PCT + (int)((FAN_DUTY_MAX_PCT - FAN_DUTY_MIN_PCT) * frac + 0.5f);
-    }
-    state_.fanOn = true;
-    state_.fanDuty = (uint8_t)fanPct;
-    ledcWrite(PIN_FAN, (fanPct * 255) / 100); // 8-bit duty
-
     // Normal hysteresis, but shut off slightly BELOW target so residual heat
     // carries the temperature the rest of the way up.
     if (tempValid && controlTemp <= sp.targetTemp - HEATER_OFFSET - HYSTERESIS)
@@ -128,6 +106,12 @@ void Controller::update(const Setpoints &sp, const SensorReadings &s)
     // Safety: no usable sensor or above the hard ceiling -> force off.
     state_.heaterFault = !tempValid || (controlTemp >= sp.targetCeiling);
     if (state_.heaterFault || state_.heaterLockout)
+        state_.heaterOn = false;
+
+    // DS probe guard: never heat while the DS sensor reads at/above target, even
+    // if a cooler BME drags the average below target and would otherwise call for
+    // heat. The DS probe alone can veto heating, never demand it.
+    if (dsValid && s.dsTemp >= sp.targetTemp)
         state_.heaterOn = false;
 
     // Max continuous-on backstop: if the heater has run too long without the
@@ -146,6 +130,43 @@ void Controller::update(const Setpoints &sp, const SensorReadings &s)
     heaterWasOn_ = state_.heaterOn;
 
     digitalWrite(PIN_HEATER, state_.heaterOn ? HEATER_ON : HEATER_OFF);
+
+    // Fan speed (PWM duty %). Computed after the heater so it can react to the
+    // heater's final state this cycle. Manual override wins. In AUTO the fan is a
+    // cooler: fully OFF while the chamber is at or below target (things are
+    // good), ramping from the floor up to full speed the further the aggregate
+    // temperature climbs ABOVE target. Two safety overrides: with no usable
+    // sensor it runs full, and whenever the heater is on the fan must run at
+    // least the floor so heat is circulated and never pools around the element.
+    // Manual values are clamped to [floor, max], so manual mode is never off.
+    int fanPct;
+    if (sp.fanManualPct >= FAN_DUTY_MIN_PCT)
+    {
+        fanPct = sp.fanManualPct > FAN_DUTY_MAX_PCT ? FAN_DUTY_MAX_PCT : sp.fanManualPct;
+    }
+    else if (!tempValid)
+    {
+        fanPct = FAN_DUTY_MAX_PCT; // blind -> full circulation
+    }
+    else
+    {
+        const float overC = controlTemp - sp.targetTemp; // >0 means too hot
+        if (overC > 0.0f)
+        {
+            const float frac = constrain(overC / FAN_RAMP_SPAN_C, 0.0f, 1.0f);
+            fanPct = FAN_DUTY_MIN_PCT + (int)((FAN_DUTY_MAX_PCT - FAN_DUTY_MIN_PCT) * frac + 0.5f);
+        }
+        else
+        {
+            fanPct = 0; // at/below target -> fan may switch fully off
+        }
+        // Heater running MUST keep the fan on to circulate heat (no hot spots).
+        if (state_.heaterOn && fanPct < FAN_DUTY_MIN_PCT)
+            fanPct = FAN_DUTY_MIN_PCT;
+    }
+    state_.fanOn = fanPct > 0;
+    state_.fanDuty = (uint8_t)fanPct;
+    ledcWrite(PIN_FAN, (fanPct * 255) / 100); // 8-bit duty
 
     // Humidifier: add moisture if too dry, stop once above target.
     if (s.humidity < sp.targetHumidity - HYSTERESIS)
