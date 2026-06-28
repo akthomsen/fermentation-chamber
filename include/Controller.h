@@ -11,7 +11,7 @@ struct Setpoints
     float targetHumidity = 0.0f; // percent
     float targetCeiling = 0.0f;  // hard over-temp cutoff, degrees C
     long runMinutes = 0;         // shut everything off after this many minutes (0 = no limit)
-    int fanManualPct = 0;        // <FAN_DUTY_MIN_PCT = AUTO (temp-proportional); else manual duty %
+    int fanManualPct = -1;       // FAN_MANUAL_AUTO (-1) = AUTO (conditioning-driven); 0..100 = manual duty %
 };
 
 // Resolved on/off state of every actuator, plus the reasons behind it. Read by

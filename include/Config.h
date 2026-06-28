@@ -38,9 +38,10 @@ constexpr int HUMIDIFIER_OFF = LOW;
 // ledcWrite value only if the MOSFET is ever rewired active-low.
 constexpr int FAN_PWM_FREQ = 25000;        // Hz, inaudible
 constexpr int FAN_PWM_RES_BITS = 8;        // 0..255 duty range
-constexpr int FAN_DUTY_MIN_PCT = 50;       // min circulation floor (above stall); also lowest manual step
-constexpr int FAN_DUTY_MAX_PCT = 100;      // full speed
-constexpr float FAN_RAMP_SPAN_C = 2.0f;    // aggregate-temp delta at which the fan hits full speed
+constexpr int FAN_DUTY_MIN_PCT = 50;       // always-on AUTO circulation floor (above stall)
+constexpr int FAN_DUTY_HUMID_PCT = 70;     // bumped speed while the humidifier is running (heater still wins)
+constexpr int FAN_DUTY_MAX_PCT = 100;      // full speed (heater running, or sensor failsafe)
+constexpr int FAN_MANUAL_AUTO = -1;        // fanManualPct sentinel: AUTO; 0..100 = manual duty %
 constexpr unsigned long FAN_KICK_MS = 300; // full-speed kick at run start to beat stiction
 
 // --- I2C addresses ---

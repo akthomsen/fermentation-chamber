@@ -16,7 +16,7 @@ MenuController::MenuController()
     : targetTemp_(DEFAULT_TARGET_TEMP),
       targetHumidity_(DEFAULT_TARGET_HUMIDITY),
       targetCeiling_(DEFAULT_CEILING),
-      fanManualPct_(0), // 0 = AUTO (temp-proportional fan)
+      fanManualPct_(FAN_MANUAL_AUTO), // AUTO (conditioning-driven circulation)
       runMinutes_(DEFAULT_RUN_MINUTES)
 {
     instance_ = this;
@@ -127,14 +127,23 @@ void IRAM_ATTR MenuController::onEncoder()
         break;
     case SCREEN_SET_FAN:
     {
-        // One knob spans AUTO + a manual 40..100% band. Turning below the floor
-        // drops into AUTO; turning up from AUTO enters manual at the floor.
-        int v = fanManualPct_ + dir * 5 * mult; // 5% steps
-        if (v >= FAN_DUTY_MAX_PCT)
-            v = FAN_DUTY_MAX_PCT;
-        else if (v < FAN_DUTY_MIN_PCT)
-            v = (dir < 0) ? 0 : FAN_DUTY_MIN_PCT; // below floor -> AUTO when turning down
-        fanManualPct_ = v;
+        // One knob spans AUTO plus a full manual 0..100% band in 5% steps.
+        // Turning up from AUTO enters manual at 0%; turning down past 0% returns
+        // to AUTO.
+        if (fanManualPct_ < 0)
+        {
+            if (dir > 0)
+                fanManualPct_ = 0; // leave AUTO into manual
+        }
+        else
+        {
+            int v = fanManualPct_ + dir * 5 * mult; // 5% steps
+            if (v > FAN_DUTY_MAX_PCT)
+                v = FAN_DUTY_MAX_PCT;
+            else if (v < 0)
+                v = FAN_MANUAL_AUTO; // below 0% -> AUTO
+            fanManualPct_ = v;
+        }
         break;
     }
     case SCREEN_SET_RUN:

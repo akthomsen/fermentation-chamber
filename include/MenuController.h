@@ -84,7 +84,7 @@ private:
     volatile float targetTemp_;
     volatile float targetHumidity_;
     volatile float targetCeiling_;
-    volatile int fanManualPct_; // <FAN_DUTY_MIN_PCT = AUTO; else manual duty %
+    volatile int fanManualPct_; // FAN_MANUAL_AUTO (-1) = AUTO; 0..100 = manual duty %
     volatile long runMinutes_;
 
     // --- Encoder decode state ---

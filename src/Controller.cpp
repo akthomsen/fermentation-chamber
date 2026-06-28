@@ -131,47 +131,37 @@ void Controller::update(const Setpoints &sp, const SensorReadings &s)
 
     digitalWrite(PIN_HEATER, state_.heaterOn ? HEATER_ON : HEATER_OFF);
 
-    // Fan speed (PWM duty %). Computed after the heater so it can react to the
-    // heater's final state this cycle. Manual override wins. In AUTO the fan is a
-    // cooler: fully OFF while the chamber is at or below target (things are
-    // good), ramping from the floor up to full speed the further the aggregate
-    // temperature climbs ABOVE target. Two safety overrides: with no usable
-    // sensor it runs full, and whenever the heater is on the fan must run at
-    // least the floor so heat is circulated and never pools around the element.
-    // Manual values are clamped to [floor, max], so manual mode is never off.
-    int fanPct;
-    if (sp.fanManualPct >= FAN_DUTY_MIN_PCT)
-    {
-        fanPct = sp.fanManualPct > FAN_DUTY_MAX_PCT ? FAN_DUTY_MAX_PCT : sp.fanManualPct;
-    }
-    else if (!tempValid)
-    {
-        fanPct = FAN_DUTY_MAX_PCT; // blind -> full circulation
-    }
-    else
-    {
-        const float overC = controlTemp - sp.targetTemp; // >0 means too hot
-        if (overC > 0.0f)
-        {
-            const float frac = constrain(overC / FAN_RAMP_SPAN_C, 0.0f, 1.0f);
-            fanPct = FAN_DUTY_MIN_PCT + (int)((FAN_DUTY_MAX_PCT - FAN_DUTY_MIN_PCT) * frac + 0.5f);
-        }
-        else
-        {
-            fanPct = 0; // at/below target -> fan may switch fully off
-        }
-        // Heater running MUST keep the fan on to circulate heat (no hot spots).
-        if (state_.heaterOn && fanPct < FAN_DUTY_MIN_PCT)
-            fanPct = FAN_DUTY_MIN_PCT;
-    }
-    state_.fanOn = fanPct > 0;
-    state_.fanDuty = (uint8_t)fanPct;
-    ledcWrite(PIN_FAN, (fanPct * 255) / 100); // 8-bit duty
-
-    // Humidifier: add moisture if too dry, stop once above target.
+    // Humidifier: add moisture if too dry, stop once above target. Resolved
+    // before the fan so the fan can react to the humidifier's final state.
     if (s.humidity < sp.targetHumidity - HYSTERESIS)
         state_.humidOn = true;
     else if (s.humidity > sp.targetHumidity + HYSTERESIS)
         state_.humidOn = false;
     digitalWrite(PIN_HUMIDIFIER, state_.humidOn ? HUMIDIFIER_ON : HUMIDIFIER_OFF);
+
+    // Fan speed (PWM duty %). The fan now lives INSIDE the chamber, so it only
+    // recirculates air -- it cannot cool. Its job is to keep the temperature and
+    // humidity uniform and to distribute heat/moisture from the other actuators.
+    // In AUTO it therefore runs continuously for the whole run, with the speed
+    // set by what is being conditioned (priority high to low):
+    //   heater on    -> full speed, distribute heat so it never pools at the element
+    //   humidifier on -> 70%, spread moisture (heater wins if both are on)
+    //   otherwise     -> circulation floor, just keep the air mixed
+    // Manual override wins over all of it (any 0..100%, so manual can also stop
+    // the fan); with no usable sensor AUTO runs full as a failsafe.
+    int fanPct;
+    if (sp.fanManualPct >= 0)
+        fanPct = sp.fanManualPct > FAN_DUTY_MAX_PCT ? FAN_DUTY_MAX_PCT : sp.fanManualPct;
+    else if (!tempValid)
+        fanPct = FAN_DUTY_MAX_PCT; // blind -> full circulation
+    else if (state_.heaterOn)
+        fanPct = FAN_DUTY_MAX_PCT; // heater wins
+    else if (state_.humidOn)
+        fanPct = FAN_DUTY_HUMID_PCT;
+    else
+        fanPct = FAN_DUTY_MIN_PCT; // always-on circulation floor
+
+    state_.fanOn = fanPct > 0;
+    state_.fanDuty = (uint8_t)fanPct;
+    ledcWrite(PIN_FAN, (fanPct * 255) / 100); // 8-bit duty
 }

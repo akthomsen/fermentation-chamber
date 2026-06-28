@@ -145,7 +145,7 @@ void Display::drawActuators(const Setpoints &sp, const ActuatorState &act)
                              : act.heaterLockout ? "COOLDN"
                              : act.heaterOn ? "ON"
                                             : "OFF";
-    const char *fanMode = sp.fanManualPct >= FAN_DUTY_MIN_PCT ? "M" : "A";
+    const char *fanMode = sp.fanManualPct >= 0 ? "M" : "A";
     oled_.setTextSize(1);
     oled_.setCursor(0, 16);
     oled_.printf("Fan       : %d%% %s", act.fanDuty, fanMode);
@@ -192,7 +192,7 @@ void Display::drawSetFan(const Setpoints &sp, bool editing)
 {
     oled_.setTextSize(2);
     oled_.setCursor(0, 24);
-    if (sp.fanManualPct < FAN_DUTY_MIN_PCT)
+    if (sp.fanManualPct < 0)
         oled_.print("AUTO");
     else
         oled_.printf("%d %%", sp.fanManualPct);
