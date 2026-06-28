@@ -10,11 +10,15 @@ void Controller::begin()
     // Fan is PWM-driven via LEDC (core 3.x API). Attaching a pin auto-allocates
     // a channel; we then write an 8-bit duty (0..255) with ledcWrite().
     ledcAttach(PIN_FAN, FAN_PWM_FREQ, FAN_PWM_RES_BITS);
+    ledcWrite(PIN_FAN, 0); // fan off until the run is started
     digitalWrite(PIN_HEATER, HEATER_OFF);
     digitalWrite(PIN_HUMIDIFIER, HUMIDIFIER_OFF);
 
-    kickFan(); // pulse to full so the fan reliably spins up; update() sets the real duty next tick
-
+    // Boot idle: nothing runs on power-up. The user starts the run from the Run
+    // Time screen (which calls restart() and kicks the fan). This avoids the
+    // chamber heating/circulating the instant it gets power. notStarted defaults
+    // true, but set it explicitly so begin() always leaves a known idle state.
+    state_.notStarted = true;
     runStartMs_ = millis();
 }
 
@@ -39,6 +43,7 @@ void Controller::stop()
 void Controller::restart()
 {
     state_ = ActuatorState{};       // clear halted latch and all actuator state
+    state_.notStarted = false;      // ActuatorState defaults notStarted=true; the run is now live
     runStartMs_ = millis();         // run timer starts over from now
     heaterWasOn_ = false;
     heaterOnSince_ = 0;

@@ -102,7 +102,11 @@ void Display::drawOverview(const Setpoints &sp, const SensorReadings &s, const A
     oled_.printf("Hum %.0f / %.0f %%", s.humidity, sp.targetHumidity);
     oled_.setCursor(0, 52);
 
-    if (act.stopped)
+    if (act.notStarted)
+    {
+        oled_.print("Time READY");
+    }
+    else if (act.stopped)
     {
         oled_.print("Time STOPPED");
     }
@@ -150,7 +154,9 @@ void Display::drawActuators(const Setpoints &sp, const ActuatorState &act)
     oled_.setCursor(0, 40);
     oled_.printf("Humidifier: %s", act.humidOn ? "ON" : "OFF");
     oled_.setCursor(0, 52);
-    if (act.stopped)
+    if (act.notStarted)
+        oled_.print("READY - push start");
+    else if (act.stopped)
         oled_.print("RUN STOPPED");
     else if (act.runComplete)
         oled_.print("RUN FINISHED");
@@ -205,7 +211,11 @@ void Display::drawSetRun(const Setpoints &sp, const ActuatorState &act, bool edi
 
     oled_.setTextSize(1);
     oled_.setCursor(0, 44);
-    if (act.stopped)
+    if (act.notStarted)
+    {
+        oled_.print("READY");
+    }
+    else if (act.stopped)
     {
         oled_.print("STOPPED");
     }
@@ -219,9 +229,11 @@ void Display::drawSetRun(const Setpoints &sp, const ActuatorState &act, bool edi
         oled_.printf("left: %ldh %02ldm", left / 60, left % 60);
     }
 
-    // Once halted, the button restarts the run instead of editing.
+    // While halted the button starts/restarts the run instead of editing.
     oled_.setCursor(0, 56);
-    if (act.halted())
+    if (act.notStarted)
+        oled_.print("push to start");
+    else if (act.halted())
         oled_.print("push to restart");
     else
         oled_.print(editing ? "EDIT: turn knob" : "push to edit");

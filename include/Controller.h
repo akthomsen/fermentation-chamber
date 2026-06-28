@@ -26,9 +26,10 @@ struct ActuatorState
     bool heaterLockout = false; // tripped max-on time, in forced cooldown
     bool runComplete = false;   // run duration elapsed -> everything off
     bool stopped = false;       // manually stopped by the user -> everything off
+    bool notStarted = true;     // powered on but never started this session -> everything off
 
-    // True when the chamber is halted for any reason and needs a restart.
-    bool halted() const { return runComplete || stopped; }
+    // True when the chamber is halted for any reason and needs a start/restart.
+    bool halted() const { return runComplete || stopped || notStarted; }
 };
 
 // Drives the fan, heater and humidifier from the current readings and setpoints.
