@@ -4,3 +4,6 @@
 .vscode/launch.json
 .vscode/ipch
 .vscode/
+
+# WiFi / MQTT credentials - never commit (repo is public)
+include/Secrets.h
