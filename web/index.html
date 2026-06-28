@@ -33,8 +33,12 @@
     .dotrow { display:flex; align-items:center; gap:7px; font-size:.85rem; color:var(--muted); }
     .dot { width:11px; height:11px; border-radius:50%; background:var(--line); transition:background .15s; }
     .dot.on { background:var(--accent); box-shadow:0 0 8px var(--accent); }
-    #chart-card { padding:14px 6px 6px 6px; }
-    #chart { max-width:100%; overflow-x:auto; }
+    #temp-card, #hum-card { padding:14px 12px 8px; margin-top:12px; }
+    #chart-temp, #chart-hum { max-width:100%; overflow-x:auto; }
+    .legend { display:flex; flex-wrap:wrap; gap:16px; padding:8px 6px 2px; font-size:.82rem; color:var(--muted); }
+    .legend span { display:inline-flex; align-items:center; gap:7px; }
+    .legend i { width:20px; border-top:3px solid; display:inline-block; }
+    .legend i.dash { border-top-width:2px; border-top-style:dashed; }
     .controls { display:flex; flex-wrap:wrap; gap:18px; align-items:flex-end; }
     .field { display:flex; flex-direction:column; gap:5px; }
     .field label { font-size:.78rem; color:var(--muted); }
@@ -87,9 +91,24 @@
     </div>
   </div>
 
-  <!-- Live chart (driven by un-retained fermenter/telemetry) -->
-  <div class="card" id="chart-card">
-    <div id="chart"></div>
+  <!-- Live charts (driven by un-retained fermenter/telemetry) -->
+  <div class="card" id="temp-card">
+    <h2>Temperature — Inside vs Ambient</h2>
+    <div id="chart-temp"></div>
+    <div class="legend">
+      <span><i style="border-color:#d85a30"></i>Inside</span>
+      <span><i style="border-color:#e0b020"></i>Ambient</span>
+      <span><i class="dash" style="border-color:#d85a30"></i>Target</span>
+      <span><i class="dash" style="border-color:#b32424"></i>Ceiling</span>
+    </div>
+  </div>
+  <div class="card" id="hum-card">
+    <h2>Humidity</h2>
+    <div id="chart-hum"></div>
+    <div class="legend">
+      <span><i style="border-color:#4a90e2"></i>Humidity</span>
+      <span><i class="dash" style="border-color:#4a90e2"></i>Target</span>
+    </div>
   </div>
 
   <!-- Controls: publish to fermenter/cmd/setpoint and fermenter/cmd/control -->
@@ -138,32 +157,106 @@
       statusEl.className = up ? "up" : "down";
     }
 
-    // ---- uPlot: dual scale (°C left, % right) ----------------------------
-    const MAX = 600;            // ~10 min @ 1 msg/s
-    let xs = [], temp = [], hum = [];
-    function chartWidth() { return Math.max(280, $("chart-card").clientWidth - 12); }
-    const opts = {
-      width: chartWidth(), height: 320,
-      scales: { x: { time: true }, C: {}, "%": {} },
+    // ---- uPlot: two charts, temperature (Inside + Ambient) and humidity --
+    const WINDOW_SEC = 300;     // sliding view width: always show the last 5 min
+    const MAX = 1800;           // hard cap on retained points (~30 min @ 1 msg/s)
+    let xs = [], tIn = [], tAmb = [], hum = [];
+
+    const GRID = { stroke: "#2a2f3a" };
+    function chartWidth(cardId) { return Math.max(280, $(cardId).clientWidth - 26); }
+
+    // Both charts share one sliding x-range: [latest - WINDOW, latest]. This is
+    // what makes the plot scroll instead of staying pinned to session start.
+    function xRange() {
+      const last = xs.length ? xs[xs.length - 1] : Date.now() / 1000;
+      return [last - WINDOW_SEC, last];
+    }
+    const xScale = { time: true, range: () => xRange() };
+    const xAxis = () => ({ stroke: "#8b929f", grid: GRID, ticks: GRID });
+
+    // Latest setpoints from fermenter/state; the threshold lines read these.
+    const sp = { targetTemp: null, targetHumidity: null, targetCeiling: null };
+
+    // y-range that always includes a (dynamic) target value, so the setpoint
+    // line stays on-screen even while the reading is still far from target.
+    function rangeWith(getTarget) {
+      return (u, dataMin, dataMax) => {
+        const t = getTarget();
+        let lo = dataMin, hi = dataMax;
+        if (lo == null || hi == null) {            // no data yet
+          if (t == null || isNaN(t)) return [0, 1];
+          lo = hi = t;
+        }
+        if (t != null && !isNaN(t)) { lo = Math.min(lo, t); hi = Math.max(hi, t); }
+        if (lo === hi) { lo -= 1; hi += 1; }
+        const pad = (hi - lo) * 0.1;
+        return [lo - pad, hi + pad];
+      };
+    }
+
+    // uPlot has no built-in threshold line; this draw-hook plugin renders
+    // horizontal lines at given scale values (the setpoints). Identification is
+    // left to the legend below the chart, not text drawn on the line.
+    function hLines(getLines) {
+      return { hooks: { draw: (u) => {
+        const { ctx } = u, { left, top, width, height } = u.bbox;
+        ctx.save();
+        ctx.lineWidth = 1;
+        for (const ln of getLines()) {
+          if (ln.value == null || isNaN(ln.value)) continue;
+          const y = u.valToPos(ln.value, ln.scale, true);
+          if (y < top || y > top + height) continue; // off-screen, skip
+          ctx.beginPath();
+          ctx.setLineDash(ln.dash || []);
+          ctx.strokeStyle = ln.color;
+          ctx.moveTo(left, y); ctx.lineTo(left + width, y); ctx.stroke();
+        }
+        ctx.restore();
+      } } };
+    }
+
+    const uTemp = new uPlot({
+      width: chartWidth("temp-card"), height: 260,
+      legend: { show: false }, // using the custom legend strip below the chart
+      scales: { x: xScale, C: { range: rangeWith(() => sp.targetTemp) } },
       series: [
         {},
-        { label: "DS18B20 °C", stroke: "#d85a30", scale: "C", width: 2 },
+        { label: "Inside °C",  stroke: "#d85a30", scale: "C", width: 2 },
+        { label: "Ambient °C", stroke: "#e0b020", scale: "C", width: 2 },
+      ],
+      axes: [ xAxis(), { scale: "C", stroke: "#8b929f", grid: GRID, ticks: GRID } ],
+      plugins: [ hLines(() => [
+        { scale: "C", value: sp.targetTemp,    color: "#d85a30", dash: [6, 4] },
+        { scale: "C", value: sp.targetCeiling, color: "#b32424", dash: [2, 4] },
+      ]) ],
+    }, [xs, tIn, tAmb], $("chart-temp"));
+
+    const uHum = new uPlot({
+      width: chartWidth("hum-card"), height: 200,
+      legend: { show: false },
+      scales: { x: xScale, "%": { range: rangeWith(() => sp.targetHumidity) } },
+      series: [
+        {},
         { label: "Humidity %", stroke: "#4a90e2", scale: "%", width: 2 },
       ],
-      axes: [
-        { stroke: "#8b929f", grid: { stroke: "#2a2f3a" }, ticks: { stroke: "#2a2f3a" } },
-        { scale: "C", stroke: "#d85a30", grid: { stroke: "#2a2f3a" }, ticks: { stroke: "#2a2f3a" } },
-        { scale: "%", side: 1, stroke: "#4a90e2", grid: { show: false } },
-      ],
-    };
-    const u = new uPlot(opts, [xs, temp, hum], $("chart"));
-    addEventListener("resize", () => u.setSize({ width: chartWidth(), height: 320 }));
+      axes: [ xAxis(), { scale: "%", stroke: "#8b929f", grid: GRID, ticks: GRID } ],
+      plugins: [ hLines(() => [
+        { scale: "%", value: sp.targetHumidity, color: "#4a90e2", dash: [6, 4] },
+      ]) ],
+    }, [xs, hum], $("chart-hum"));
+
+    addEventListener("resize", () => {
+      uTemp.setSize({ width: chartWidth("temp-card"), height: 260 });
+      uHum.setSize({ width: chartWidth("hum-card"), height: 200 });
+    });
 
     // ---- telemetry: live points ------------------------------------------
     function pushPoint(d) {
-      xs.push(Date.now() / 1000); temp.push(d.dsTemp); hum.push(d.humidity);
-      if (xs.length > MAX) { xs.shift(); temp.shift(); hum.shift(); }
-      u.setData([xs, temp, hum]);
+      xs.push(Date.now() / 1000);
+      tIn.push(d.dsTemp); tAmb.push(d.bmeTemp); hum.push(d.humidity);
+      if (xs.length > MAX) { xs.shift(); tIn.shift(); tAmb.shift(); hum.shift(); }
+      uTemp.setData([xs, tIn, tAmb]);
+      uHum.setData([xs, hum]);
       $("v-temp").textContent = d.dsTemp.toFixed(2);
       $("v-hum").textContent  = d.humidity.toFixed(1);
     }
@@ -176,6 +269,13 @@
       $("v-fan").textContent      = d.fanDuty;
       $("dot-heater").classList.toggle("on", d.heaterOn);
       $("dot-humid").classList.toggle("on", d.humidOn);
+
+      // Feed the threshold lines and redraw so they track a changed setpoint
+      // immediately (the y-range also keys off these, so a redraw re-frames).
+      sp.targetTemp = d.targetTemp;
+      sp.targetHumidity = d.targetHumidity;
+      sp.targetCeiling = d.targetCeiling;
+      uTemp.redraw(true, true); uHum.redraw(true, true); // recalc axes -> re-frame
 
       halted = d.halted;
       $("v-halted").textContent = halted ? "⏸ Halted" : "▶ Running";
