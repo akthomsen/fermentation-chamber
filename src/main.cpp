@@ -51,7 +51,50 @@ static void connectWiFi()
 constexpr char TOPIC_STATE[] = "fermenter/state";
 constexpr char TOPIC_CMD_SETPOINT[] = "fermenter/cmd/setpoint";
 constexpr char TOPIC_CMD_CONTROL[] = "fermenter/cmd/control";
-constexpr size_t MQTT_BUFFER_SIZE = 512;
+constexpr size_t MQTT_BUFFER_SIZE = 640;
+
+static const char *controlSensorName(ControlSensor sensor)
+{
+    switch (sensor)
+    {
+    case CONTROL_SENSOR_DS:
+        return "ds";
+    case CONTROL_SENSOR_BME:
+        return "bme";
+    case CONTROL_SENSOR_AVERAGE:
+        return "average";
+    default:
+        return "ds";
+    }
+}
+
+static bool readControlSensor(JsonObjectConst obj, const char *key, ControlSensor &out)
+{
+    JsonVariantConst v = obj[key];
+    if (v.is<int>())
+    {
+        const int raw = v.as<int>();
+        if (raw >= 0 && raw < CONTROL_SENSOR_COUNT)
+        {
+            out = (ControlSensor)raw;
+            return true;
+        }
+        return false;
+    }
+
+    const char *s = v.as<const char *>();
+    if (!s)
+        return false;
+    if (strcmp(s, "ds") == 0)
+        out = CONTROL_SENSOR_DS;
+    else if (strcmp(s, "bme") == 0)
+        out = CONTROL_SENSOR_BME;
+    else if (strcmp(s, "average") == 0 || strcmp(s, "avg") == 0)
+        out = CONTROL_SENSOR_AVERAGE;
+    else
+        return false;
+    return true;
+}
 
 static bool readFloat(JsonObjectConst obj, const char *key, float &out)
 {
@@ -89,13 +132,20 @@ static void publishState()
     const ActuatorState &a = controller.state();
     const char *heaterOverride = a.heaterOverride > 0 ? "on" : (a.heaterOverride < 0 ? "off" : "auto");
     const char *humidOverride = a.humidOverride > 0 ? "on" : (a.humidOverride < 0 ? "off" : "auto");
-    char buf[384];
+    char controlTemp[16];
+    if (isfinite(a.controlTemp))
+        snprintf(controlTemp, sizeof(controlTemp), "%.1f", a.controlTemp);
+    else
+        snprintf(controlTemp, sizeof(controlTemp), "null");
+    char buf[512];
     const int n = snprintf(buf, sizeof(buf),
                            "{\"targetTemp\":%.1f,\"targetHumidity\":%.0f,\"targetCeiling\":%.1f,"
+                           "\"dsMaxOverTarget\":%.1f,\"controlSensor\":\"%s\",\"controlTemp\":%s,"
                            "\"runMinutes\":%ld,\"fanManualPct\":%d,\"fanDuty\":%u,"
                            "\"heaterOn\":%s,\"heaterOverride\":\"%s\",\"humidOn\":%s,"
                            "\"humidOverride\":\"%s\",\"halted\":%s}",
                            sp.targetTemp, sp.targetHumidity, sp.targetCeiling,
+                           sp.dsMaxOverTarget, controlSensorName(a.controlSensor), controlTemp,
                            sp.runMinutes, sp.fanManualPct, a.fanDuty,
                            a.heaterOn ? "true" : "false", heaterOverride,
                            a.humidOn ? "true" : "false",
@@ -163,6 +213,7 @@ static void onMqtt(char *topic, byte *payload, unsigned int len)
         float f = 0.0f;
         long l = 0;
         int i = 0;
+        ControlSensor sensor = CONTROL_SENSOR_DS;
 
         if (readFloat(obj, "targetTemp", f))
         {
@@ -177,6 +228,16 @@ static void onMqtt(char *topic, byte *payload, unsigned int len)
         if (readFloat(obj, "targetCeiling", f))
         {
             menu.setTargetCeiling(constrain(f, TEMP_VALID_MIN, TEMP_VALID_MAX));
+            handled = true;
+        }
+        if (readFloat(obj, "dsMaxOverTarget", f))
+        {
+            menu.setDsMaxOverTarget(constrain(f, 0.0f, TEMP_VALID_MAX));
+            handled = true;
+        }
+        if (readControlSensor(obj, "controlSensor", sensor))
+        {
+            menu.setControlSensor(sensor);
             handled = true;
         }
         if (readInt(obj, "fanManualPct", i))

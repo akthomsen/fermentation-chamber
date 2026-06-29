@@ -32,6 +32,8 @@ private:
     void drawSetTemp(const Setpoints &sp, bool editing);
     void drawSetHumid(const Setpoints &sp, bool editing);
     void drawSetCeiling(const Setpoints &sp, bool editing);
+    void drawSetDsMax(const Setpoints &sp, bool editing);
+    void drawSetControlSensor(const Setpoints &sp, bool editing);
     void drawSetFan(const Setpoints &sp, bool editing);
     void drawSetRun(const Setpoints &sp, const ActuatorState &act, bool editing,
                     unsigned long runStartMs);

@@ -92,6 +92,7 @@
       <h2>Temperature</h2>
       <div class="stat"><span id="v-temp">–</span><small> °C</small></div>
       <div class="sub">set <span id="v-temp-set">–</span> °C · ceil <span id="v-ceil">–</span></div>
+      <div class="sub">control <span id="v-control-sensor">–</span> · DS max +<span id="v-ds-max">–</span> °C</div>
     </div>
     <div class="card">
       <h2>Humidity</h2>
@@ -156,6 +157,30 @@
         </div>
       </div>
       <div class="field">
+        <label for="in-ceil">Ceiling °C</label>
+        <div class="stepper">
+          <button type="button" data-step="-0.5" data-target="in-ceil">−</button>
+          <input id="in-ceil" type="number" step="0.5" min="0" max="70">
+          <button type="button" data-step="0.5" data-target="in-ceil">+</button>
+        </div>
+      </div>
+      <div class="field">
+        <label for="in-ds-max">DS max over target °C</label>
+        <div class="stepper">
+          <button type="button" data-step="-0.5" data-target="in-ds-max">−</button>
+          <input id="in-ds-max" type="number" step="0.5" min="0" max="70">
+          <button type="button" data-step="0.5" data-target="in-ds-max">+</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>Control sensor</label>
+        <div class="seg" id="control-sensor-seg">
+          <button type="button" data-control-sensor="ds">DS</button>
+          <button type="button" data-control-sensor="bme">BME</button>
+          <button type="button" data-control-sensor="average">Avg</button>
+        </div>
+      </div>
+      <div class="field">
         <label for="in-fan">Fan %</label>
         <div class="stepper">
           <button type="button" data-step="-5" data-target="in-fan">−</button>
@@ -213,6 +238,7 @@
     const $ = (id) => document.getElementById(id);
     const statusEl = $("status");
     const tempInput = $("in-temp"), humInput = $("in-hum");
+    const ceilInput = $("in-ceil"), dsMaxInput = $("in-ds-max");
     const fanInput = $("in-fan"), runHoursInput = $("in-run-hours"), runMinutesInput = $("in-run-minutes");
     const powerBtn = $("power");
     const alertEl = $("alert");
@@ -220,12 +246,13 @@
     let fanMode = "auto";
     let heaterOverride = "auto";
     let humidOverride = "auto";
+    let controlSensor = "ds";
 
     // Inputs the user has edited but not yet applied. While an input is dirty we
     // stop seeding it from fermenter/state, so the ~1 Hz state echo can't clobber
     // a value mid-edit. Cleared on Send commands, after which the device echo re-syncs it.
     const dirty = new Set();
-    [tempInput, humInput, fanInput, runHoursInput, runMinutesInput].forEach((el) =>
+    [tempInput, humInput, ceilInput, dsMaxInput, fanInput, runHoursInput, runMinutesInput].forEach((el) =>
       el.addEventListener("input", () => dirty.add(el.id)));
 
     function setStatus(text, up) {
@@ -256,7 +283,7 @@
     const xAxis = () => ({ stroke: "#8b929f", grid: GRID, ticks: GRID });
 
     // Latest setpoints from fermenter/state; the threshold lines read these.
-    const sp = { targetTemp: null, targetHumidity: null, targetCeiling: null };
+    const sp = { targetTemp: null, targetHumidity: null, targetCeiling: null, dsMaxOverTarget: null };
 
     // y-range that always includes a (dynamic) target value, so the setpoint
     // line stays on-screen even while the reading is still far from target.
@@ -382,6 +409,8 @@
       $("v-temp-set").textContent = d.targetTemp.toFixed(1);
       $("v-hum-set").textContent  = d.targetHumidity.toFixed(0);
       $("v-ceil").textContent     = d.targetCeiling.toFixed(1);
+      $("v-ds-max").textContent   = (d.dsMaxOverTarget ?? 0).toFixed(1);
+      $("v-control-sensor").textContent = d.controlSensor || "ds";
       $("v-fan").textContent      = d.fanDuty;
       $("dot-heater").classList.toggle("on", d.heaterOn);
       $("dot-humid").classList.toggle("on", d.humidOn);
@@ -404,6 +433,7 @@
       sp.targetTemp = d.targetTemp;
       sp.targetHumidity = d.targetHumidity;
       sp.targetCeiling = d.targetCeiling;
+      sp.dsMaxOverTarget = d.dsMaxOverTarget;
       uTemp.redraw(true, true); uHum.redraw(true, true); // recalc axes -> re-frame
 
       halted = d.halted;
@@ -414,6 +444,12 @@
       // Only seed an input the user has not edited since the last send.
       if (!dirty.has("in-temp")) tempInput.value = d.targetTemp;
       if (!dirty.has("in-hum"))  humInput.value  = d.targetHumidity;
+      if (!dirty.has("in-ceil")) ceilInput.value = d.targetCeiling;
+      if (!dirty.has("in-ds-max")) dsMaxInput.value = d.dsMaxOverTarget ?? 0;
+      if (!dirty.has("control-sensor")) {
+        controlSensor = d.controlSensor || "ds";
+        setSegmentActive("data-control-sensor", controlSensor);
+      }
       if (!dirty.has("fan-mode")) {
         fanMode = d.fanManualPct == null || d.fanManualPct < 0 ? "auto" : "manual";
         setSegmentActive("data-fan-mode", fanMode);
@@ -502,6 +538,14 @@
       });
     });
 
+    document.querySelectorAll("[data-control-sensor]").forEach((b) => {
+      b.addEventListener("click", () => {
+        controlSensor = b.dataset.controlSensor;
+        setSegmentActive("data-control-sensor", controlSensor);
+        dirty.add("control-sensor");
+      });
+    });
+
     document.querySelectorAll("[data-heater]").forEach((b) => {
       b.addEventListener("click", () => {
         heaterOverride = b.dataset.heater;
@@ -526,6 +570,9 @@
       client.publish("fermenter/cmd/setpoint", JSON.stringify({
         targetTemp: numberOr(tempInput.value, sp.targetTemp),
         targetHumidity: numberOr(humInput.value, sp.targetHumidity),
+        targetCeiling: numberOr(ceilInput.value, sp.targetCeiling),
+        dsMaxOverTarget: numberOr(dsMaxInput.value, sp.dsMaxOverTarget),
+        controlSensor,
         fanManualPct: fanMode === "auto" ? -1 : intInRange(fanInput.value, 0, 0, 100),
         runMinutes: runtimeMinutes,
       }));

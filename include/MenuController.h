@@ -13,6 +13,8 @@ enum MenuScreen : int
     SCREEN_SET_TEMP,
     SCREEN_SET_HUMID,
     SCREEN_SET_CEIL,
+    SCREEN_SET_DS_MAX,
+    SCREEN_SET_CONTROL_SENSOR,
     SCREEN_SET_FAN,
     SCREEN_SET_RUN,
     SCREEN_COUNT
@@ -55,6 +57,8 @@ public:
     void setTargetTemp(float c) { targetTemp_ = c; }
     void setTargetHumidity(float p) { targetHumidity_ = p; }
     void setTargetCeiling(float c) { targetCeiling_ = c; }
+    void setDsMaxOverTarget(float c) { dsMaxOverTarget_ = c; }
+    void setControlSensor(ControlSensor sensor) { controlSensor_ = sensor < CONTROL_SENSOR_COUNT ? sensor : CONTROL_SENSOR_DS; }
     void setFanManualPct(int pct) { fanManualPct_ = pct; }
     void setRunMinutes(long minutes) { runMinutes_ = minutes; }
 
@@ -94,6 +98,8 @@ private:
     volatile float targetTemp_;
     volatile float targetHumidity_;
     volatile float targetCeiling_;
+    volatile float dsMaxOverTarget_;
+    volatile ControlSensor controlSensor_;
     volatile int fanManualPct_; // FAN_MANUAL_AUTO (-1) = AUTO; 0..100 = manual duty %
     volatile long runMinutes_;
 

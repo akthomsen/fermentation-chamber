@@ -3,6 +3,14 @@
 #include <Arduino.h>
 #include "Sensors.h"
 
+enum ControlSensor : uint8_t
+{
+    CONTROL_SENSOR_DS = 0,
+    CONTROL_SENSOR_BME,
+    CONTROL_SENSOR_AVERAGE,
+    CONTROL_SENSOR_COUNT
+};
+
 // User-adjustable targets that drive the control logic. A plain snapshot value
 // type so it can be passed safely from the ISR-owned menu state into update().
 struct Setpoints
@@ -10,8 +18,10 @@ struct Setpoints
     float targetTemp = 0.0f;     // degrees C
     float targetHumidity = 0.0f; // percent
     float targetCeiling = 0.0f;  // hard over-temp cutoff, degrees C
+    float dsMaxOverTarget = 0.0f; // DS safety veto above target + this many degrees C
     long runMinutes = 0;         // shut everything off after this many minutes (0 = no limit)
     int fanManualPct = -1;       // FAN_MANUAL_AUTO (-1) = AUTO (conditioning-driven); 0..100 = manual duty %
+    ControlSensor controlSensor = CONTROL_SENSOR_DS;
 };
 
 // Resolved on/off state of every actuator, plus the reasons behind it. Read by
@@ -26,6 +36,8 @@ struct ActuatorState
     bool heaterFault = false;    // sensor invalid / over ceiling -> heater forced off
     bool heaterLockout = false;  // tripped max-on time, in forced cooldown
     int8_t heaterOverride = 0;   // -1 = force off, 0 = auto, 1 = force on (safety still wins)
+    ControlSensor controlSensor = CONTROL_SENSOR_DS; // selected temperature source for thermostat decisions
+    float controlTemp = NAN;     // last resolved thermostat temperature, degrees C
     bool runComplete = false;    // run duration elapsed -> everything off
     bool stopped = false;        // manually stopped by the user -> everything off
     bool notStarted = true;      // powered on but never started this session -> everything off
@@ -96,4 +108,5 @@ private:
     bool heaterWasOn_ = false;
     unsigned long heaterOnSince_ = 0;
     unsigned long lockoutSince_ = 0;
+    unsigned long fanFullUntilMs_ = 0;
 };
