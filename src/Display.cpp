@@ -3,7 +3,6 @@
 #include <string.h>
 #include <Wire.h>
 #include "Config.h"
-#include "MenuController.h" // for MenuScreen
 
 namespace
 {
@@ -20,14 +19,6 @@ long remainingMinutes(const Setpoints &sp, unsigned long runStartMs)
     return left < 0 ? 0 : left;
 }
 
-// Common "push to edit / EDIT: turn knob" prompt on the bottom line.
-void drawEditPrompt(Adafruit_SSD1306 &oled, bool editing, int y)
-{
-    oled.setTextSize(1);
-    oled.setCursor(0, y);
-    oled.print(editing ? "EDIT: turn knob" : "push to edit");
-}
-
 const char *controlSensorLabel(ControlSensor sensor)
 {
     switch (sensor)
@@ -41,6 +32,64 @@ const char *controlSensorLabel(ControlSensor sensor)
     default:
         return "?";
     }
+}
+
+const char *overrideLabel(int8_t ov)
+{
+    return ov > 0 ? "On" : (ov < 0 ? "Off" : "Auto");
+}
+
+// One row of a group list: short label + current value.
+void formatGroupItem(ItemKind k, const Setpoints &sp, const ActuatorState &act, char *out, size_t n)
+{
+    switch (k)
+    {
+    case IK_VIEW_SENSORS:
+        snprintf(out, n, "Sensors");
+        break;
+    case IK_VIEW_ACT:
+        snprintf(out, n, "Actuators");
+        break;
+    case IK_EDIT_TEMP:
+        snprintf(out, n, "Temp    %.1fC", sp.targetTemp);
+        break;
+    case IK_EDIT_HUMID:
+        snprintf(out, n, "Humid   %.0f%%", sp.targetHumidity);
+        break;
+    case IK_EDIT_MAXTEMP:
+        snprintf(out, n, "MaxTemp %.1fC", sp.targetCeiling);
+        break;
+    case IK_EDIT_DSMAX:
+        snprintf(out, n, "DS Max +%.1fC", sp.dsMaxOverTarget);
+        break;
+    case IK_EDIT_CONTROL:
+        snprintf(out, n, "Control %s", controlSensorLabel(sp.controlSensor));
+        break;
+    case IK_CTRL_HEATER:
+        snprintf(out, n, "Heater  %s", overrideLabel(act.heaterOverride));
+        break;
+    case IK_CTRL_HUMID:
+        snprintf(out, n, "Humid   %s", overrideLabel(act.humidOverride));
+        break;
+    case IK_CTRL_FAN:
+        if (sp.fanManualPct < 0)
+            snprintf(out, n, "Fan     AUTO");
+        else
+            snprintf(out, n, "Fan     %d%%", sp.fanManualPct);
+        break;
+    case IK_BACK:
+    default:
+        snprintf(out, n, "< Back");
+        break;
+    }
+}
+
+// Common prompt under an open editor: turn changes, push returns to the list.
+void drawValuePrompt(Adafruit_SSD1306 &oled, int y)
+{
+    oled.setTextSize(1);
+    oled.setCursor(0, y);
+    oled.print("turn=set  push=back");
 }
 } // namespace
 
@@ -69,71 +118,119 @@ void Display::showMessage(const char *line1, const char *line2)
     oled_.display();
 }
 
-void Display::render(int screen, bool editing,
-                     const Setpoints &sp,
-                     const SensorReadings &sensors,
-                     const ActuatorState &act,
-                     const char *title,
-                     unsigned long runStartMs,
-                     const NetworkStatus &net)
+void Display::drawTopBar(const char *title, const NetworkStatus &net, bool showAlert)
 {
-    oled_.clearDisplay();
-
-    // --- Top bar: screen title + divider ---
     oled_.setTextSize(1);
     oled_.setTextColor(SSD1306_WHITE);
     oled_.setCursor(0, 0);
     oled_.printf("[ %s ]", title);
 
-    // Corner alert chip flags the first broken link, so any screen shows at a
-    // glance that connectivity is down. Suppressed on the Network screen itself,
-    // which already spells the state out in full.
-    const char *alert = !net.wifiConnected ? "WiFi!" : !net.mqttConnected ? "MQTT!" : "";
-    if (screen != SCREEN_NETWORK && alert[0])
+    // Corner alert chip flags the first broken link from any screen. Suppressed on
+    // the Network page, which already spells the state out in full.
+    if (showAlert)
     {
-        const int16_t x = SCREEN_WIDTH - (int16_t)strlen(alert) * 6;
-        oled_.setCursor(x < 0 ? 0 : x, 0);
-        oled_.print(alert);
+        const char *alert = !net.wifiConnected ? "WiFi!" : !net.mqttConnected ? "MQTT!" : "";
+        if (alert[0])
+        {
+            const int16_t x = SCREEN_WIDTH - (int16_t)strlen(alert) * 6;
+            oled_.setCursor(x < 0 ? 0 : x, 0);
+            oled_.print(alert);
+        }
     }
     oled_.drawFastHLine(0, 12, SCREEN_WIDTH, SSD1306_WHITE);
+}
 
-    switch (screen)
+void Display::renderNetwork(const NetworkStatus &net)
+{
+    oled_.clearDisplay();
+    drawTopBar("Network", net, false);
+    drawNetwork(net);
+    oled_.display();
+}
+
+void Display::render(const MenuController &menu,
+                     const Setpoints &sp,
+                     const SensorReadings &sensors,
+                     const ActuatorState &act,
+                     unsigned long runStartMs,
+                     const NetworkStatus &net)
+{
+    oled_.clearDisplay();
+
+    const bool onNetworkPage = (menu.topPage() == TOP_NETWORK && !menu.entered());
+    drawTopBar(menu.title(), net, !onNetworkPage);
+
+    if (menu.isEditing())
     {
-    case SCREEN_OVERVIEW:
-        drawOverview(sp, sensors, act, runStartMs);
-        break;
-    case SCREEN_SENSORS:
-        drawSensors(sensors);
-        break;
-    case SCREEN_ACTUATORS:
-        drawActuators(sp, act);
-        break;
-    case SCREEN_NETWORK:
-        drawNetwork(net);
-        break;
-    case SCREEN_SET_TEMP:
-        drawSetTemp(sp, editing);
-        break;
-    case SCREEN_SET_HUMID:
-        drawSetHumid(sp, editing);
-        break;
-    case SCREEN_SET_CEIL:
-        drawSetCeiling(sp, editing);
-        break;
-    case SCREEN_SET_DS_MAX:
-        drawSetDsMax(sp, editing);
-        break;
-    case SCREEN_SET_CONTROL_SENSOR:
-        drawSetControlSensor(sp, editing);
-        break;
-    case SCREEN_SET_FAN:
-        drawSetFan(sp, editing);
-        break;
-    case SCREEN_SET_RUN:
-        drawSetRun(sp, act, editing, runStartMs);
-        break;
-    default:
-        break;
+        if (!menu.entered())
+        {
+            // The only directly-editable top page is Run Time.
+            drawSetRun(sp, act, true, runStartMs);
+        }
+        else
+        {
+            switch (menu.currentItem())
+            {
+            case IK_VIEW_SENSORS:
+                drawSensors(sensors);
+                break;
+            case IK_VIEW_ACT:
+                drawActuators(sp, act);
+                break;
+            case IK_EDIT_TEMP:
+                drawSetTemp(sp);
+                break;
+            case IK_EDIT_HUMID:
+                drawSetHumid(sp);
+                break;
+            case IK_EDIT_MAXTEMP:
+                drawSetCeiling(sp);
+                break;
+            case IK_EDIT_DSMAX:
+                drawSetDsMax(sp);
+                break;
+            case IK_EDIT_CONTROL:
+                drawSetControlSensor(sp);
+                break;
+            case IK_CTRL_HEATER:
+                drawOverrideCtrl(act.heaterOverride);
+                break;
+            case IK_CTRL_HUMID:
+                drawOverrideCtrl(act.humidOverride);
+                break;
+            case IK_CTRL_FAN:
+                drawSetFan(sp);
+                break;
+            default:
+                break;
+            }
+        }
+    }
+    else if (menu.entered())
+    {
+        drawGroupList(menu, sp, act);
+    }
+    else
+    {
+        switch (menu.topPage())
+        {
+        case TOP_OVERVIEW:
+            drawOverview(sp, sensors, act, runStartMs);
+            break;
+        case TOP_STATES:
+        case TOP_SETTINGS:
+        case TOP_ACTUATORS:
+            drawCover(menu.title());
+            break;
+        case TOP_RUNTIME:
+            drawSetRun(sp, act, false, runStartMs);
+            break;
+        case TOP_NETWORK:
+            drawNetwork(net);
+            break;
+        default:
+            break;
+        }
     }
 
     oled_.display();
@@ -168,12 +265,13 @@ void Display::drawOverview(const Setpoints &sp, const SensorReadings &s, const A
     }
     else if (sp.runMinutes > 0)
     {
-        // Running with a time limit: uptime (u), remaining (l) and goal (g) on
-        // one line so the whole run is visible at a glance. Single-letter labels
-        // keep it within 128 px even for multi-hour runs.
+        // Running with a time limit: Uptime, Left and Goal on one line so the
+        // whole run is visible at a glance. Labels are UPPERCASE on purpose: a
+        // lowercase 'l' is indistinguishable from '1' in the 5x7 font (so "l13:00"
+        // reads as "113:00"). Single letters keep it within 128 px for long runs.
         const long up = elapsedMinutes(runStartMs);
         const long left = remainingMinutes(sp, runStartMs);
-        oled_.printf("u%ld:%02ld l%ld:%02ld g%ld:%02ld",
+        oled_.printf("U%ld:%02ld L%ld:%02ld G%ld:%02ld",
                      up / 60, up % 60, left / 60, left % 60,
                      sp.runMinutes / 60, sp.runMinutes % 60);
     }
@@ -222,53 +320,58 @@ void Display::drawActuators(const Setpoints &sp, const ActuatorState &act)
         oled_.printf("Ctrl %s: %.1f C", controlSensorLabel(act.controlSensor), act.controlTemp);
 }
 
-void Display::drawNetwork(const NetworkStatus &net)
+void Display::drawCover(const char *name)
 {
+    oled_.setTextSize(2);
+    oled_.setCursor(0, 26);
+    oled_.print(name);
     oled_.setTextSize(1);
-    oled_.setCursor(0, 16);
-    oled_.printf("WiFi: %s", net.wifiConnected ? net.ip : "DOWN");
-    oled_.setCursor(0, 28);
-    oled_.printf("MQTT: %s", net.mqttConnected ? "OK" : "DOWN");
-
-    // Reason / progress line: the exact failure reason (e.g. "rc-2 ...") is the
-    // whole point of this screen -- it tells the user WHY the link is down.
-    oled_.setCursor(0, 40);
-    oled_.print(net.detail);
-
     oled_.setCursor(0, 52);
-    if (net.connecting)
-        oled_.print("Connecting...");
-    else if (net.mqttConnected)
-        oled_.print("push to disconnect");
-    else
-        oled_.print("push to connect");
+    oled_.print("push to open");
 }
 
-void Display::drawSetTemp(const Setpoints &sp, bool editing)
+void Display::drawGroupList(const MenuController &menu, const Setpoints &sp, const ActuatorState &act)
+{
+    oled_.setTextSize(1);
+    const uint8_t n = menu.groupItemCount();
+    const uint8_t sel = menu.itemIndex();
+    for (uint8_t i = 0; i < n; i++)
+    {
+        const int y = 15 + i * 8;
+        oled_.setCursor(0, y);
+        oled_.print(i == sel ? ">" : " ");
+        oled_.setCursor(8, y);
+        char buf[22];
+        formatGroupItem(menu.groupItem(i), sp, act, buf, sizeof(buf));
+        oled_.print(buf);
+    }
+}
+
+void Display::drawSetTemp(const Setpoints &sp)
 {
     oled_.setTextSize(2);
     oled_.setCursor(0, 24);
     oled_.printf("%.1f C", sp.targetTemp);
-    drawEditPrompt(oled_, editing, 56);
+    drawValuePrompt(oled_, 56);
 }
 
-void Display::drawSetHumid(const Setpoints &sp, bool editing)
+void Display::drawSetHumid(const Setpoints &sp)
 {
     oled_.setTextSize(2);
     oled_.setCursor(0, 24);
     oled_.printf("%.0f %%", sp.targetHumidity);
-    drawEditPrompt(oled_, editing, 56);
+    drawValuePrompt(oled_, 56);
 }
 
-void Display::drawSetCeiling(const Setpoints &sp, bool editing)
+void Display::drawSetCeiling(const Setpoints &sp)
 {
     oled_.setTextSize(2);
     oled_.setCursor(0, 24);
     oled_.printf("%.1f C", sp.targetCeiling);
-    drawEditPrompt(oled_, editing, 56);
+    drawValuePrompt(oled_, 56);
 }
 
-void Display::drawSetDsMax(const Setpoints &sp, bool editing)
+void Display::drawSetDsMax(const Setpoints &sp)
 {
     oled_.setTextSize(2);
     oled_.setCursor(0, 22);
@@ -276,18 +379,18 @@ void Display::drawSetDsMax(const Setpoints &sp, bool editing)
     oled_.setTextSize(1);
     oled_.setCursor(0, 44);
     oled_.printf("DS limit %.1f C", sp.targetTemp + sp.dsMaxOverTarget);
-    drawEditPrompt(oled_, editing, 56);
+    drawValuePrompt(oled_, 56);
 }
 
-void Display::drawSetControlSensor(const Setpoints &sp, bool editing)
+void Display::drawSetControlSensor(const Setpoints &sp)
 {
     oled_.setTextSize(2);
     oled_.setCursor(0, 24);
     oled_.print(controlSensorLabel(sp.controlSensor));
-    drawEditPrompt(oled_, editing, 56);
+    drawValuePrompt(oled_, 56);
 }
 
-void Display::drawSetFan(const Setpoints &sp, bool editing)
+void Display::drawSetFan(const Setpoints &sp)
 {
     oled_.setTextSize(2);
     oled_.setCursor(0, 24);
@@ -295,7 +398,15 @@ void Display::drawSetFan(const Setpoints &sp, bool editing)
         oled_.print("AUTO");
     else
         oled_.printf("%d %%", sp.fanManualPct);
-    drawEditPrompt(oled_, editing, 56);
+    drawValuePrompt(oled_, 56);
+}
+
+void Display::drawOverrideCtrl(int8_t override)
+{
+    oled_.setTextSize(2);
+    oled_.setCursor(0, 24);
+    oled_.print(override > 0 ? "ON" : (override < 0 ? "OFF" : "AUTO"));
+    drawValuePrompt(oled_, 56);
 }
 
 void Display::drawSetRun(const Setpoints &sp, const ActuatorState &act, bool editing,
@@ -341,5 +452,27 @@ void Display::drawSetRun(const Setpoints &sp, const ActuatorState &act, bool edi
     else if (act.halted())
         oled_.print("push to restart");
     else
-        oled_.print(editing ? "EDIT: left" : "push to edit");
+        oled_.print(editing ? "turn=set  push=back" : "push to edit");
+}
+
+void Display::drawNetwork(const NetworkStatus &net)
+{
+    oled_.setTextSize(1);
+    oled_.setCursor(0, 16);
+    oled_.printf("WiFi: %s", net.wifiConnected ? net.ip : "DOWN");
+    oled_.setCursor(0, 28);
+    oled_.printf("MQTT: %s", net.mqttConnected ? "OK" : "DOWN");
+
+    // Reason / progress line: the exact failure reason (e.g. "rc-2 ...") is the
+    // whole point of this screen -- it tells the user WHY the link is down.
+    oled_.setCursor(0, 40);
+    oled_.print(net.detail);
+
+    oled_.setCursor(0, 52);
+    if (net.connecting)
+        oled_.print("Connecting...");
+    else if (net.mqttConnected)
+        oled_.print("push to disconnect");
+    else
+        oled_.print("push to connect");
 }

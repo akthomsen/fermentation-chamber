@@ -131,8 +131,7 @@ static void computeNetworkStatus()
 // intentional blocking connect, so the wait is always visible to the user).
 static void renderNetworkScreen()
 {
-    display.render(SCREEN_NETWORK, false, menu.setpoints(), sensors.readings(),
-                   controller.state(), "Network", controller.runStartMs(), netStatus);
+    display.renderNetwork(netStatus);
 }
 
 // Topics. Telemetry (MQTT_TOPIC, from Secrets.h) is the live, un-retained
@@ -419,39 +418,41 @@ static void onMqtt(char *topic, byte *payload, unsigned int len)
         {
             controller.restart();
             menu.setHalted(false);
+            menu.setHeaterOverride(0); // a fresh run starts in full AUTO
+            menu.setHumidOverride(0);
             handled = true;
         }
-        // Humidifier override (does not halt the run): auto follows humidity;
-        // on/off force the actuator state until changed again.
+        // Overrides are intents owned by the menu (single source of truth); main
+        // reconciles them onto the Controller each loop. -1 = off, 0 = auto, 1 = on.
+        // These do not halt the run.
         else if (action && strcmp(action, "humidifier_off") == 0)
         {
-            controller.setHumidifierOverride(false);
+            menu.setHumidOverride(-1);
             handled = true;
         }
         else if (action && strcmp(action, "humidifier_on") == 0)
         {
-            controller.setHumidifierOverride(true);
+            menu.setHumidOverride(1);
             handled = true;
         }
         else if (action && strcmp(action, "humidifier_auto") == 0)
         {
-            controller.clearHumidifierOverride();
+            menu.setHumidOverride(0);
             handled = true;
         }
-        // heater action /on/off
         else if (action && strcmp(action, "heater_off") == 0)
         {
-            controller.setHeaterOverride(false);
+            menu.setHeaterOverride(-1);
             handled = true;
         }
         else if (action && strcmp(action, "heater_on") == 0)
         {
-            controller.setHeaterOverride(true);
+            menu.setHeaterOverride(1);
             handled = true;
         }
         else if (action && strcmp(action, "heater_auto") == 0)
         {
-            controller.clearHeaterOverride();
+            menu.setHeaterOverride(0);
             handled = true;
         }
         // fan speed set
@@ -607,15 +608,40 @@ void loop()
     {
         controller.restart();
         menu.setHalted(false);
+        menu.setHeaterOverride(0); // a fresh run starts in full AUTO
+        menu.setHumidOverride(0);
         menu.requestRedraw();
+    }
+
+    // Apply the menu's actuator-override intents onto the Controller. The menu is
+    // the single source of truth (encoder + MQTT both write it); reconcile only on
+    // change so the off-side-effects don't re-fire every loop.
+    const int8_t wantHeater = menu.heaterOverride();
+    if (wantHeater != controller.state().heaterOverride)
+    {
+        if (wantHeater > 0)
+            controller.setHeaterOverride(true);
+        else if (wantHeater < 0)
+            controller.setHeaterOverride(false);
+        else
+            controller.clearHeaterOverride();
+    }
+    const int8_t wantHumid = menu.humidOverride();
+    if (wantHumid != controller.state().humidOverride)
+    {
+        if (wantHumid > 0)
+            controller.setHumidifierOverride(true);
+        else if (wantHumid < 0)
+            controller.setHumidifierOverride(false);
+        else
+            controller.clearHumidifierOverride();
     }
 
     // Redraw only when something changed (saves flicker).
     if (menu.consumeRedraw())
     {
-        display.render(menu.screen(), menu.isEditing(),
-                       menu.setpoints(), sensors.readings(), controller.state(),
-                       menu.screenLabel(), controller.runStartMs(), netStatus);
+        display.render(menu, menu.setpoints(), sensors.readings(),
+                       controller.state(), controller.runStartMs(), netStatus);
     }
 
     // Network is never auto-retried: just track status, pump MQTT while it is up,
