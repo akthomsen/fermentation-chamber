@@ -42,9 +42,13 @@ void Controller::stop()
 
 void Controller::restart()
 {
-    state_ = ActuatorState{};       // clear halted latch and all actuator state
-    state_.notStarted = false;      // ActuatorState defaults notStarted=true; the run is now live
-    runStartMs_ = millis();         // run timer starts over from now
+    state_ = ActuatorState{};  // clear halted latch and all actuator state
+    state_.notStarted = false; // ActuatorState defaults notStarted=true; the run is now live
+    runStartMs_ = millis();    // run timer starts over from now
+    humidOverride_ = 0;
+    state_.humidOverride = humidOverride_;
+    heaterOverride_ = 0;
+    state_.heaterOverride = heaterOverride_;
     heaterWasOn_ = false;
     heaterOnSince_ = 0;
     lockoutSince_ = 0;
@@ -52,10 +56,71 @@ void Controller::restart()
     kickFan(); // spin the fan back up cleanly after a halt
 }
 
+void Controller::setHumidifierOverride(bool on)
+{
+    humidOverride_ = on ? 1 : -1;
+    state_.humidOverride = humidOverride_;
+
+    if (!on)
+    {
+        state_.humidOn = false;
+        digitalWrite(PIN_HUMIDIFIER, HUMIDIFIER_OFF);
+    }
+}
+
+void Controller::clearHumidifierOverride()
+{
+    humidOverride_ = 0;
+    state_.humidOverride = humidOverride_;
+}
+
+void Controller::setHeaterOverride(bool on)
+{
+    heaterOverride_ = on ? 1 : -1;
+    state_.heaterOverride = heaterOverride_;
+
+    if (!on)
+    {
+        state_.heaterOn = false;
+        heaterWasOn_ = false;
+        digitalWrite(PIN_HEATER, HEATER_OFF);
+    }
+}
+
+void Controller::clearHeaterOverride()
+{
+    heaterOverride_ = 0;
+    state_.heaterOverride = heaterOverride_;
+}
+
+void Controller::setFanSpeed(int pct)
+{
+    if (pct < FAN_MANUAL_AUTO)
+        pct = FAN_MANUAL_AUTO;
+    else if (pct > FAN_DUTY_MAX_PCT)
+        pct = FAN_DUTY_MAX_PCT;
+
+    fanManualPct_ = pct;
+    if (pct >= 0)
+    {
+        state_.fanOn = pct > 0;
+        state_.fanDuty = (uint8_t)pct;
+        ledcWrite(PIN_FAN, (pct * 255) / 100);
+    }
+}
+
+void Controller::setRunLimit(long minutes)
+{
+    runLimitMinutes_ = minutes < 0 ? 0 : minutes;
+}
+
 void Controller::update(const Setpoints &sp, const SensorReadings &s)
 {
     const unsigned long now = millis();
     const unsigned long elapsedMs = now - runStartMs_;
+
+    state_.humidOverride = humidOverride_;
+    state_.heaterOverride = heaterOverride_;
 
     // Run-duration limit: once the configured time has elapsed, shut everything
     // off and stay off until restart() is called (e.g. from the Run Time menu).
@@ -103,6 +168,11 @@ void Controller::update(const Setpoints &sp, const SensorReadings &s)
     else if (controlTemp >= sp.targetTemp - HEATER_OFFSET)
         state_.heaterOn = false;
 
+    if (heaterOverride_ < 0)
+        state_.heaterOn = false;
+    else if (heaterOverride_ > 0)
+        state_.heaterOn = true;
+
     // Safety: no usable sensor or above the hard ceiling -> force off.
     state_.heaterFault = !tempValid || (controlTemp >= sp.targetCeiling);
     if (state_.heaterFault || state_.heaterLockout)
@@ -133,7 +203,11 @@ void Controller::update(const Setpoints &sp, const SensorReadings &s)
 
     // Humidifier: add moisture if too dry, stop once above target. Resolved
     // before the fan so the fan can react to the humidifier's final state.
-    if (s.humidity < sp.targetHumidity - HYSTERESIS)
+    if (humidOverride_ < 0)
+        state_.humidOn = false;
+    else if (humidOverride_ > 0)
+        state_.humidOn = true;
+    else if (s.humidity < sp.targetHumidity - HYSTERESIS)
         state_.humidOn = true;
     else if (s.humidity > sp.targetHumidity + HYSTERESIS)
         state_.humidOn = false;

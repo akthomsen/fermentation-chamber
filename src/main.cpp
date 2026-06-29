@@ -51,6 +51,34 @@ static void connectWiFi()
 constexpr char TOPIC_STATE[] = "fermenter/state";
 constexpr char TOPIC_CMD_SETPOINT[] = "fermenter/cmd/setpoint";
 constexpr char TOPIC_CMD_CONTROL[] = "fermenter/cmd/control";
+constexpr size_t MQTT_BUFFER_SIZE = 512;
+
+static bool readFloat(JsonObjectConst obj, const char *key, float &out)
+{
+    JsonVariantConst v = obj[key];
+    if (!v.is<float>() && !v.is<int>())
+        return false;
+    out = v.as<float>();
+    return isfinite(out);
+}
+
+static bool readLong(JsonObjectConst obj, const char *key, long &out)
+{
+    JsonVariantConst v = obj[key];
+    if (!v.is<long>() && !v.is<int>())
+        return false;
+    out = v.as<long>();
+    return true;
+}
+
+static bool readInt(JsonObjectConst obj, const char *key, int &out)
+{
+    JsonVariantConst v = obj[key];
+    if (!v.is<int>())
+        return false;
+    out = v.as<int>();
+    return true;
+}
 
 // Publish the device's real setpoints + actuator state (retained). This is the
 // ground truth the UI mirrors -- it reflects encoder changes too, not just the
@@ -59,14 +87,32 @@ static void publishState()
 {
     const Setpoints sp = menu.setpoints();
     const ActuatorState &a = controller.state();
-    char buf[224];
-    snprintf(buf, sizeof(buf),
-             "{\"targetTemp\":%.1f,\"targetHumidity\":%.0f,\"targetCeiling\":%.1f,"
-             "\"fanDuty\":%u,\"heaterOn\":%s,\"humidOn\":%s,\"halted\":%s}",
-             sp.targetTemp, sp.targetHumidity, sp.targetCeiling, a.fanDuty,
-             a.heaterOn ? "true" : "false", a.humidOn ? "true" : "false",
-             a.halted() ? "true" : "false");
-    mqtt.publish(TOPIC_STATE, buf, true); // retained
+    const char *heaterOverride = a.heaterOverride > 0 ? "on" : (a.heaterOverride < 0 ? "off" : "auto");
+    const char *humidOverride = a.humidOverride > 0 ? "on" : (a.humidOverride < 0 ? "off" : "auto");
+    char buf[384];
+    const int n = snprintf(buf, sizeof(buf),
+                           "{\"targetTemp\":%.1f,\"targetHumidity\":%.0f,\"targetCeiling\":%.1f,"
+                           "\"runMinutes\":%ld,\"fanManualPct\":%d,\"fanDuty\":%u,"
+                           "\"heaterOn\":%s,\"heaterOverride\":\"%s\",\"humidOn\":%s,"
+                           "\"humidOverride\":\"%s\",\"halted\":%s}",
+                           sp.targetTemp, sp.targetHumidity, sp.targetCeiling,
+                           sp.runMinutes, sp.fanManualPct, a.fanDuty,
+                           a.heaterOn ? "true" : "false", heaterOverride,
+                           a.humidOn ? "true" : "false",
+                           humidOverride,
+                           a.halted() ? "true" : "false");
+    if (n < 0 || (size_t)n >= sizeof(buf))
+    {
+        Serial.println("State publish skipped: JSON buffer too small");
+        return;
+    }
+    if ((size_t)n + strlen(TOPIC_STATE) + 8 >= MQTT_BUFFER_SIZE)
+    {
+        Serial.println("State publish skipped: MQTT buffer too small");
+        return;
+    }
+    if (!mqtt.publish(TOPIC_STATE, buf, true))
+        Serial.println("State publish failed");
 }
 
 // (Re)establish the MQTT connection, blocking until connected.
@@ -96,32 +142,142 @@ static void mqttReconnect()
 static void onMqtt(char *topic, byte *payload, unsigned int len)
 {
     JsonDocument doc;
-    if (deserializeJson(doc, payload, len))
-        return; // ignore malformed JSON
+    DeserializationError err = deserializeJson(doc, payload, len);
+    if (err)
+    {
+        Serial.printf("MQTT ignored malformed JSON on %s: %s\n", topic, err.c_str());
+        return;
+    }
+
+    if (!doc.is<JsonObject>())
+    {
+        Serial.printf("MQTT ignored non-object JSON on %s\n", topic);
+        return;
+    }
+
+    JsonObjectConst obj = doc.as<JsonObjectConst>();
+    bool handled = false;
 
     if (strcmp(topic, TOPIC_CMD_SETPOINT) == 0)
     {
-        if (doc["targetTemp"].is<float>())
-            menu.setTargetTemp(constrain(doc["targetTemp"].as<float>(),
-                                         TEMP_VALID_MIN, DEFAULT_CEILING));
-        if (doc["targetHumidity"].is<float>())
-            menu.setTargetHumidity(constrain(doc["targetHumidity"].as<float>(), 0.0f, 100.0f));
+        float f = 0.0f;
+        long l = 0;
+        int i = 0;
+
+        if (readFloat(obj, "targetTemp", f))
+        {
+            menu.setTargetTemp(constrain(f, TEMP_VALID_MIN, DEFAULT_CEILING));
+            handled = true;
+        }
+        if (readFloat(obj, "targetHumidity", f))
+        {
+            menu.setTargetHumidity(constrain(f, 0.0f, 100.0f));
+            handled = true;
+        }
+        if (readFloat(obj, "targetCeiling", f))
+        {
+            menu.setTargetCeiling(constrain(f, TEMP_VALID_MIN, TEMP_VALID_MAX));
+            handled = true;
+        }
+        if (readInt(obj, "fanManualPct", i))
+        {
+            const int pct = constrain(i, FAN_MANUAL_AUTO, FAN_DUTY_MAX_PCT);
+            menu.setFanManualPct(pct);
+            controller.setFanSpeed(pct);
+            handled = true;
+        }
+        if (readLong(obj, "runMinutes", l))
+        {
+            const long minutes = l < 0 ? 0 : l;
+            menu.setRunMinutes(minutes);
+            controller.setRunLimit(minutes);
+            handled = true;
+        }
     }
     else if (strcmp(topic, TOPIC_CMD_CONTROL) == 0)
     {
         // Mirror the physical knob: stop halts everything until a fresh start;
         // start = restart() (resets the run timer), exactly like the button.
-        const char *action = doc["action"];
+        const char *action = obj["action"].as<const char *>();
         if (action && strcmp(action, "stop") == 0)
         {
             controller.stop();
             menu.setHalted(true);
+            handled = true;
         }
         else if (action && strcmp(action, "start") == 0)
         {
             controller.restart();
             menu.setHalted(false);
+            handled = true;
         }
+        // Humidifier override (does not halt the run): auto follows humidity;
+        // on/off force the actuator state until changed again.
+        else if (action && strcmp(action, "humidifier_off") == 0)
+        {
+            controller.setHumidifierOverride(false);
+            handled = true;
+        }
+        else if (action && strcmp(action, "humidifier_on") == 0)
+        {
+            controller.setHumidifierOverride(true);
+            handled = true;
+        }
+        else if (action && strcmp(action, "humidifier_auto") == 0)
+        {
+            controller.clearHumidifierOverride();
+            handled = true;
+        }
+        // heater action /on/off
+        else if (action && strcmp(action, "heater_off") == 0)
+        {
+            controller.setHeaterOverride(false);
+            handled = true;
+        }
+        else if (action && strcmp(action, "heater_on") == 0)
+        {
+            controller.setHeaterOverride(true);
+            handled = true;
+        }
+        else if (action && strcmp(action, "heater_auto") == 0)
+        {
+            controller.clearHeaterOverride();
+            handled = true;
+        }
+        // fan speed set
+        else if (action && strcmp(action, "fan_speed") == 0)
+        {
+            int pctRaw = 0;
+            if (readInt(obj, "speed", pctRaw))
+            {
+                const int pct = constrain(pctRaw, FAN_MANUAL_AUTO, FAN_DUTY_MAX_PCT);
+                menu.setFanManualPct(pct);
+                controller.setFanSpeed(pct);
+                handled = true;
+            }
+        }
+        else if (action && strcmp(action, "run_limit") == 0)
+        {
+            long rawMinutes = 0;
+            if (readLong(obj, "minutes", rawMinutes))
+            {
+                const long minutes = rawMinutes < 0 ? 0 : rawMinutes;
+                menu.setRunMinutes(minutes);
+                controller.setRunLimit(minutes);
+                handled = true;
+            }
+        }
+    }
+    else
+    {
+        Serial.printf("MQTT ignored unexpected topic: %s\n", topic);
+        return;
+    }
+
+    if (!handled)
+    {
+        Serial.printf("MQTT ignored unsupported command on %s\n", topic);
+        return;
     }
 
     menu.requestRedraw(); // OLED reflects the remote change too
@@ -145,6 +301,8 @@ void setup()
 
     connectWiFi();
     mqtt.setServer(MQTT_BROKER_IP, MQTT_PORT);
+    if (!mqtt.setBufferSize(MQTT_BUFFER_SIZE))
+        Serial.println("MQTT buffer resize failed");
     mqtt.setCallback(onMqtt);
 
     menu.begin();

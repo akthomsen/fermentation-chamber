@@ -54,6 +54,9 @@ public:
     // same fields -- no critical section required.
     void setTargetTemp(float c) { targetTemp_ = c; }
     void setTargetHumidity(float p) { targetHumidity_ = p; }
+    void setTargetCeiling(float c) { targetCeiling_ = c; }
+    void setFanManualPct(int pct) { fanManualPct_ = pct; }
+    void setRunMinutes(long minutes) { runMinutes_ = minutes; }
 
     // Returns true (and clears the flag) when the display needs redrawing.
     bool consumeRedraw();
