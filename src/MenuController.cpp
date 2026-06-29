@@ -4,7 +4,7 @@
 
 // Labels shown in the screen title bar, indexed by MenuScreen.
 static const char *const kMenuLabels[SCREEN_COUNT] = {
-    "Overview", "Sensors", "Actuators", "Set Temp", "Set Humid", "Max Temp", "Set Fan", "Run Time"};
+    "Overview", "Sensors", "Actuators", "Set Temp", "Set Humid", "Max Temp", "DS Max", "Control", "Set Fan", "Run Time"};
 
 // Quadrature decode table: maps a 4-bit (prev<<2 | now) state to a step.
 // Invalid transitions (contact bounce) decode to 0, so noise is ignored.
@@ -16,6 +16,8 @@ MenuController::MenuController()
     : targetTemp_(DEFAULT_TARGET_TEMP),
       targetHumidity_(DEFAULT_TARGET_HUMIDITY),
       targetCeiling_(DEFAULT_CEILING),
+      dsMaxOverTarget_(DEFAULT_DS_MAX_OVER_TARGET),
+      controlSensor_(CONTROL_SENSOR_DS),
       fanManualPct_(FAN_MANUAL_AUTO), // AUTO (conditioning-driven circulation)
       runMinutes_(DEFAULT_RUN_MINUTES)
 {
@@ -45,6 +47,8 @@ Setpoints MenuController::setpoints() const
     sp.targetTemp = targetTemp_;
     sp.targetHumidity = targetHumidity_;
     sp.targetCeiling = targetCeiling_;
+    sp.dsMaxOverTarget = dsMaxOverTarget_;
+    sp.controlSensor = controlSensor_;
     sp.fanManualPct = fanManualPct_;
     sp.runMinutes = runMinutes_;
     return sp;
@@ -74,10 +78,19 @@ bool MenuController::consumeStop()
     return true;
 }
 
+bool MenuController::consumeActivity()
+{
+    if (!activityPending_)
+        return false;
+    activityPending_ = false;
+    return true;
+}
+
 bool MenuController::isEditableScreen(int screen) const
 {
     return screen == SCREEN_SET_TEMP || screen == SCREEN_SET_HUMID ||
            screen == SCREEN_SET_CEIL || screen == SCREEN_SET_FAN ||
+           screen == SCREEN_SET_DS_MAX || screen == SCREEN_SET_CONTROL_SENSOR ||
            screen == SCREEN_SET_RUN;
 }
 
@@ -100,6 +113,7 @@ void IRAM_ATTR MenuController::onEncoder()
     if (dir == 0)
         return;
     encAccum_ = 0;
+    activityPending_ = true;
 
     if (!editing_)
     {
@@ -124,6 +138,14 @@ void IRAM_ATTR MenuController::onEncoder()
         break;
     case SCREEN_SET_CEIL:
         targetCeiling_ = targetCeiling_ + dir * 0.5f * mult;
+        break;
+    case SCREEN_SET_DS_MAX:
+        dsMaxOverTarget_ = dsMaxOverTarget_ + dir * 0.5f * mult;
+        if (dsMaxOverTarget_ < 0.0f)
+            dsMaxOverTarget_ = 0.0f;
+        break;
+    case SCREEN_SET_CONTROL_SENSOR:
+        controlSensor_ = (ControlSensor)((controlSensor_ + dir + CONTROL_SENSOR_COUNT) % CONTROL_SENSOR_COUNT);
         break;
     case SCREEN_SET_FAN:
     {
@@ -169,6 +191,7 @@ void MenuController::poll()
         btnDown_ = true;
         longFired_ = false;
         btnDownSince_ = now;
+        activityPending_ = true;
     }
     else if (pressed && btnDown_)
     {
@@ -179,6 +202,7 @@ void MenuController::poll()
             stopRequested_ = true;
             editing_ = false;
             menuChanged_ = true;
+            activityPending_ = true;
         }
     }
     else if (!pressed && btnDown_)
@@ -186,6 +210,7 @@ void MenuController::poll()
         // Released: a short, clean press counts as a tap (long hold already acted).
         btnDown_ = false;
         const unsigned long held = now - btnDownSince_;
+        activityPending_ = true;
         if (!longFired_ && held >= BUTTON_DEBOUNCE_MS)
             onShortPress();
     }

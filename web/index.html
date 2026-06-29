@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fermentation chamber</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mqtt@5/dist/mqtt.min.js"></script>
+  <style>
+    :root {
+      --bg:#0f1115; --card:#1a1d24; --line:#2a2f3a; --txt:#e6e8ec;
+      --muted:#8b929f; --accent:#d85a30; --blue:#4a90e2; --ok:#1d9e75; --bad:#b32424;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin:0; background:var(--bg); color:var(--txt);
+      font:15px/1.5 system-ui, -apple-system, sans-serif; padding:16px; max-width:980px;
+      margin-inline:auto;
+    }
+    header { display:flex; align-items:baseline; gap:12px; margin-bottom:14px; flex-wrap:wrap; }
+    h1 { font-size:1.25rem; margin:0; }
+    #status { font-size:.85rem; color:var(--muted); }
+    #status.up   { color:var(--ok); }
+    #status.down { color:var(--bad); }
+    .grid { display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); margin-bottom:12px; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
+    .card h2 { font-size:.72rem; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:0 0 6px; font-weight:600; }
+    .stat { font-size:28px; font-weight:500; font-variant-numeric:tabular-nums; }
+    .stat small { font-size:14px; color:var(--muted); }
+    .sub { font-size:.8rem; color:var(--muted); margin-top:2px; }
+    .dots { display:flex; gap:16px; margin-top:4px; }
+    .dotrow { display:flex; align-items:center; gap:7px; font-size:.85rem; color:var(--muted); }
+    .dot { width:11px; height:11px; border-radius:50%; background:var(--line); transition:background .15s; }
+    .dot.on { background:var(--accent); box-shadow:0 0 8px var(--accent); }
+    #temp-card, #hum-card, #fan-plot-card, #heater-plot-card, #humid-plot-card {
+      padding:14px 12px 8px; margin-top:12px;
+    }
+    .plot-head { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:0 4px 8px; }
+    .plot-head h2 { margin:0; }
+    .plot-toggle {
+      background:transparent; color:var(--txt); border:1px solid var(--line);
+      border-radius:8px; padding:5px 10px; font-size:.82rem;
+    }
+    .plot-body.hidden { display:none; }
+    #chart-temp, #chart-hum, #chart-fan, #chart-heater, #chart-humid {
+      max-width:100%; overflow-x:auto;
+    }
+    .legend { display:flex; flex-wrap:wrap; gap:16px; padding:8px 6px 2px; font-size:.82rem; color:var(--muted); }
+    .legend span { display:inline-flex; align-items:center; gap:7px; }
+    .legend i { width:20px; border-top:3px solid; display:inline-block; }
+    .legend i.dash { border-top-width:2px; border-top-style:dashed; }
+    .readout {
+      min-height:24px; display:flex; flex-wrap:wrap; gap:14px; align-items:center;
+      padding:6px 6px 0; color:var(--txt); font-size:.85rem; font-variant-numeric:tabular-nums;
+    }
+    .readout .time { color:var(--muted); }
+    .readout .empty { color:var(--muted); }
+    .controls { display:flex; flex-wrap:wrap; gap:18px; align-items:flex-end; }
+    .field { display:flex; flex-direction:column; gap:5px; }
+    .field label { font-size:.78rem; color:var(--muted); }
+    .inline { flex-direction:row; align-items:center; gap:8px; min-height:45px; }
+    .inline input { width:18px; height:18px; accent-color:var(--accent); }
+    .stepper { display:flex; align-items:stretch; }
+    .stepper button { width:42px; font-size:20px; background:var(--bg); color:var(--txt); border:1px solid var(--line); }
+    .stepper button:first-child { border-radius:8px 0 0 8px; }
+    .stepper button:last-child  { border-radius:0 8px 8px 0; }
+    .stepper input {
+      width:74px; text-align:center; font-size:18px; font-variant-numeric:tabular-nums;
+      background:var(--bg); color:var(--txt); border:1px solid var(--line); border-left:0; border-right:0;
+    }
+    button { cursor:pointer; padding:10px 18px; border:0; border-radius:8px; background:var(--accent); color:#fff; font-size:15px; }
+    button:active { transform:translateY(1px); }
+    button.ghost { background:transparent; color:var(--txt); border:1px solid var(--line); }
+    .seg { display:flex; align-items:stretch; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+    .seg button { border-radius:0; background:var(--bg); color:var(--txt); border-right:1px solid var(--line); min-width:58px; }
+    .seg button:last-child { border-right:0; }
+    .seg button.active { background:var(--accent); color:#fff; }
+    #apply { align-self:flex-end; }
+    #power { min-width:120px; }
+    button.stopped { background:var(--ok); }
+    .spacer { flex:1; }
+    /* Alert banner: driven by the retained fermenter/alert topic the twin owns. */
+    #alert { display:none; align-items:center; gap:10px; background:var(--bad); color:#fff;
+             border-radius:10px; padding:11px 15px; margin-bottom:12px; font-size:.9rem; }
+    #alert.warn { background:#9a6a00; }
+    #alert.show { display:flex; }
+    #alert .code { font-weight:600; letter-spacing:.02em; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Fermentation chamber</h1>
+    <span id="status" class="down">connecting…</span>
+  </header>
+
+  <!-- Active fault from the digital twin (retained fermenter/alert) -->
+  <div id="alert"><span class="code"></span><span class="msg"></span></div>
+
+  <!-- Status cards (driven by retained fermenter/state) -->
+  <div class="grid">
+    <div class="card">
+      <h2>Temperature</h2>
+      <div class="stat"><span id="v-temp">–</span><small> °C</small></div>
+      <div class="sub">set <span id="v-temp-set">–</span> °C · ceil <span id="v-ceil">–</span></div>
+      <div class="sub">control <span id="v-control-sensor">–</span> · DS max +<span id="v-ds-max">–</span> °C</div>
+    </div>
+    <div class="card">
+      <h2>Humidity</h2>
+      <div class="stat"><span id="v-hum">–</span><small> %</small></div>
+      <div class="sub">set <span id="v-hum-set">–</span> %</div>
+    </div>
+    <div class="card">
+      <h2>Fan</h2>
+      <div class="stat"><span id="v-fan">–</span><small> %</small></div>
+    </div>
+    <div class="card">
+      <h2>Actuators</h2>
+      <div class="dots">
+        <span class="dotrow"><span id="dot-heater" class="dot"></span>Heater</span>
+        <span class="dotrow"><span id="dot-humid" class="dot"></span>Humid.</span>
+      </div>
+      <div class="sub" id="v-halted" style="margin-top:8px">—</div>
+      <div class="sub" id="v-humid-note" style="margin-top:4px;color:var(--accent)"></div>
+    </div>
+  </div>
+
+  <div id="plots">
+    <!-- Live charts (driven by un-retained fermenter/telemetry) -->
+    <div class="card" id="temp-card">
+      <div class="plot-head">
+        <h2>Temperature — Inside vs Ambient</h2>
+        <button class="plot-toggle" type="button" data-plot-toggle="temp-body" aria-expanded="true">Hide</button>
+      </div>
+      <div class="plot-body" id="temp-body">
+        <div id="chart-temp"></div>
+        <div id="readout-temp" class="readout"><span class="empty">Hover plot for readings</span></div>
+        <div class="legend">
+          <span><i style="border-color:#d85a30"></i>Inside</span>
+          <span><i style="border-color:#e0b020"></i>Ambient</span>
+          <span><i class="dash" style="border-color:#d85a30"></i>Target</span>
+          <span><i class="dash" style="border-color:#b32424"></i>Ceiling</span>
+        </div>
+      </div>
+    </div>
+    <div class="card" id="hum-card">
+      <div class="plot-head">
+        <h2>Humidity</h2>
+        <button class="plot-toggle" type="button" data-plot-toggle="hum-body" aria-expanded="true">Hide</button>
+      </div>
+      <div class="plot-body" id="hum-body">
+        <div id="chart-hum"></div>
+        <div id="readout-hum" class="readout"><span class="empty">Hover plot for readings</span></div>
+        <div class="legend">
+          <span><i style="border-color:#4a90e2"></i>Humidity</span>
+          <span><i class="dash" style="border-color:#4a90e2"></i>Target</span>
+        </div>
+      </div>
+    </div>
+    <div class="card" id="fan-plot-card">
+      <div class="plot-head">
+        <h2>Fan</h2>
+        <button class="plot-toggle" type="button" data-plot-toggle="fan-body" aria-expanded="true">Hide</button>
+      </div>
+      <div class="plot-body" id="fan-body">
+        <div id="chart-fan"></div>
+        <div id="readout-fan" class="readout"><span class="empty">Hover plot for readings</span></div>
+        <div class="legend">
+          <span><i style="border-color:#8bc34a"></i>Fan duty</span>
+        </div>
+      </div>
+    </div>
+    <div class="card" id="heater-plot-card">
+      <div class="plot-head">
+        <h2>Heater</h2>
+        <button class="plot-toggle" type="button" data-plot-toggle="heater-body" aria-expanded="true">Hide</button>
+      </div>
+      <div class="plot-body" id="heater-body">
+        <div id="chart-heater"></div>
+        <div id="readout-heater" class="readout"><span class="empty">Hover plot for readings</span></div>
+        <div class="legend">
+          <span><i style="border-color:#d85a30"></i>Heater</span>
+        </div>
+      </div>
+    </div>
+    <div class="card" id="humid-plot-card">
+      <div class="plot-head">
+        <h2>Humidifier</h2>
+        <button class="plot-toggle" type="button" data-plot-toggle="humid-body" aria-expanded="true">Hide</button>
+      </div>
+      <div class="plot-body" id="humid-body">
+        <div id="chart-humid"></div>
+        <div id="readout-humid" class="readout"><span class="empty">Hover plot for readings</span></div>
+        <div class="legend">
+          <span><i style="border-color:#4a90e2"></i>Humidifier</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Controls: publish to fermenter/cmd/setpoint and fermenter/cmd/control -->
+  <div class="card" style="margin-top:12px">
+    <h2>Controls</h2>
+    <div class="controls">
+      <div class="field">
+        <label for="in-temp">Target temp °C</label>
+        <div class="stepper">
+          <button type="button" data-step="-0.5" data-target="in-temp">−</button>
+          <input id="in-temp" type="number" step="0.5" min="0" max="45">
+          <button type="button" data-step="0.5" data-target="in-temp">+</button>
+        </div>
+      </div>
+      <div class="field">
+        <label for="in-hum">Target humidity %</label>
+        <div class="stepper">
+          <button type="button" data-step="-1" data-target="in-hum">−</button>
+          <input id="in-hum" type="number" step="1" min="0" max="100">
+          <button type="button" data-step="1" data-target="in-hum">+</button>
+        </div>
+      </div>
+      <div class="field">
+        <label for="in-ceil">Ceiling °C</label>
+        <div class="stepper">
+          <button type="button" data-step="-0.5" data-target="in-ceil">−</button>
+          <input id="in-ceil" type="number" step="0.5" min="0" max="70">
+          <button type="button" data-step="0.5" data-target="in-ceil">+</button>
+        </div>
+      </div>
+      <div class="field">
+        <label for="in-ds-max">DS max over target °C</label>
+        <div class="stepper">
+          <button type="button" data-step="-0.5" data-target="in-ds-max">−</button>
+          <input id="in-ds-max" type="number" step="0.5" min="0" max="70">
+          <button type="button" data-step="0.5" data-target="in-ds-max">+</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>Control sensor</label>
+        <div class="seg" id="control-sensor-seg">
+          <button type="button" data-control-sensor="ds">DS</button>
+          <button type="button" data-control-sensor="bme">BME</button>
+          <button type="button" data-control-sensor="average">Avg</button>
+        </div>
+      </div>
+      <div class="field">
+        <label for="in-fan">Fan %</label>
+        <div class="stepper">
+          <button type="button" data-step="-5" data-target="in-fan">−</button>
+          <input id="in-fan" type="number" step="5" min="0" max="100">
+          <button type="button" data-step="5" data-target="in-fan">+</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>Fan mode</label>
+        <div class="seg" id="fan-seg">
+          <button type="button" data-fan-mode="auto">Auto</button>
+          <button type="button" data-fan-mode="manual">Manual</button>
+        </div>
+      </div>
+      <div class="field">
+        <label for="in-run-hours">Runtime hours</label>
+        <div class="stepper">
+          <button type="button" data-step="-1" data-target="in-run-hours">−</button>
+          <input id="in-run-hours" type="number" step="1" min="0">
+          <button type="button" data-step="1" data-target="in-run-hours">+</button>
+        </div>
+      </div>
+      <div class="field">
+        <label for="in-run-minutes">Runtime minutes</label>
+        <div class="stepper">
+          <button type="button" data-step="-5" data-target="in-run-minutes">−</button>
+          <input id="in-run-minutes" type="number" step="5" min="0" max="59">
+          <button type="button" data-step="5" data-target="in-run-minutes">+</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>Heater</label>
+        <div class="seg" id="heater-seg">
+          <button type="button" data-heater="auto">Auto</button>
+          <button type="button" data-heater="off">Off</button>
+          <button type="button" data-heater="on">On</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>Humidifier</label>
+        <div class="seg" id="humid-seg">
+          <button type="button" data-humid="auto">Auto</button>
+          <button type="button" data-humid="off">Off</button>
+          <button type="button" data-humid="on">On</button>
+        </div>
+      </div>
+      <button id="apply">Send commands</button>
+      <span class="spacer"></span>
+      <button id="power" class="ghost">Stop</button>
+    </div>
+  </div>
+
+  <script>
+    // ---- elements --------------------------------------------------------
+    const $ = (id) => document.getElementById(id);
+    const statusEl = $("status");
+    const tempInput = $("in-temp"), humInput = $("in-hum");
+    const ceilInput = $("in-ceil"), dsMaxInput = $("in-ds-max");
+    const fanInput = $("in-fan"), runHoursInput = $("in-run-hours"), runMinutesInput = $("in-run-minutes");
+    const powerBtn = $("power");
+    const alertEl = $("alert");
+    let halted = false;         // last reported halted state, drives the power button
+    let fanMode = "auto";
+    let heaterOverride = "auto";
+    let humidOverride = "auto";
+    let controlSensor = "ds";
+
+    // Inputs the user has edited but not yet applied. While an input is dirty we
+    // stop seeding it from fermenter/state, so the ~1 Hz state echo can't clobber
+    // a value mid-edit. Cleared on Send commands, after which the device echo re-syncs it.
+    const dirty = new Set();
+    [tempInput, humInput, ceilInput, dsMaxInput, fanInput, runHoursInput, runMinutesInput].forEach((el) =>
+      el.addEventListener("input", () => dirty.add(el.id)));
+
+    function setStatus(text, up) {
+      statusEl.textContent = text;
+      statusEl.className = up ? "up" : "down";
+    }
+
+    function setSegmentActive(attr, value) {
+      document.querySelectorAll(`[${attr}]`).forEach((b) =>
+        b.classList.toggle("active", b.getAttribute(attr) === value));
+    }
+
+    // ---- uPlot: charts ---------------------------------------------------
+    const WINDOW_SEC = 300;     // sliding view width: always show the last 5 min
+    const MAX = 1800;           // hard cap on retained points (~30 min @ 1 msg/s)
+    let xs = [], tIn = [], tAmb = [], hum = [];
+    let xsAct = [], fanDuty = [], heaterDuty = [], humidDuty = [];
+
+    const GRID = { stroke: "#2a2f3a" };
+    function chartWidth(cardId) { return Math.max(280, $(cardId).clientWidth - 26); }
+
+    // Both charts share one sliding x-range: [latest - WINDOW, latest]. This is
+    // what makes the plot scroll instead of staying pinned to session start.
+    function xRange() {
+      const last = xs.length ? xs[xs.length - 1] : Date.now() / 1000;
+      return [last - WINDOW_SEC, last];
+    }
+    function xRangeAct() {
+      const last = xsAct.length ? xsAct[xsAct.length - 1] : Date.now() / 1000;
+      return [last - WINDOW_SEC, last];
+    }
+    const xScale = { time: true, range: () => xRange() };
+    const xScaleAct = { time: true, range: () => xRangeAct() };
+    const xAxis = () => ({ stroke: "#8b929f", grid: GRID, ticks: GRID });
+
+    // Latest setpoints from fermenter/state; the threshold lines read these.
+    const sp = { targetTemp: null, targetHumidity: null, targetCeiling: null, dsMaxOverTarget: null };
+
+    // y-range that always includes a (dynamic) target value, so the setpoint
+    // line stays on-screen even while the reading is still far from target.
+    function rangeWith(getTarget) {
+      return (u, dataMin, dataMax) => {
+        const t = getTarget();
+        let lo = dataMin, hi = dataMax;
+        if (lo == null || hi == null) {            // no data yet
+          if (t == null || isNaN(t)) return [0, 1];
+          lo = hi = t;
+        }
+        if (t != null && !isNaN(t)) { lo = Math.min(lo, t); hi = Math.max(hi, t); }
+        if (lo === hi) { lo -= 1; hi += 1; }
+        const pad = (hi - lo) * 0.1;
+        return [lo - pad, hi + pad];
+      };
+    }
+
+    // uPlot has no built-in threshold line; this draw-hook plugin renders
+    // horizontal lines at given scale values (the setpoints). Identification is
+    // left to the legend below the chart, not text drawn on the line.
+    function hLines(getLines) {
+      return { hooks: { draw: (u) => {
+        const { ctx } = u, { left, top, width, height } = u.bbox;
+        ctx.save();
+        ctx.lineWidth = 1;
+        for (const ln of getLines()) {
+          if (ln.value == null || isNaN(ln.value)) continue;
+          const y = u.valToPos(ln.value, ln.scale, true);
+          if (y < top || y > top + height) continue; // off-screen, skip
+          ctx.beginPath();
+          ctx.setLineDash(ln.dash || []);
+          ctx.strokeStyle = ln.color;
+          ctx.moveTo(left, y); ctx.lineTo(left + width, y); ctx.stroke();
+        }
+        ctx.restore();
+      } } };
+    }
+
+    function fmtTime(sec) {
+      return new Date(sec * 1000).toLocaleTimeString([], {
+        hour: "2-digit", minute: "2-digit", second: "2-digit",
+      });
+    }
+
+    function fmtValue(v, digits, unit) {
+      return v == null || isNaN(v) ? "–" : `${v.toFixed(digits)} ${unit}`;
+    }
+
+    function cursorReadout(elId, rows) {
+      return { hooks: { setCursor: (u) => {
+        const idx = u.cursor.idx;
+        const el = $(elId);
+        if (idx == null || idx < 0 || idx >= xs.length) {
+          el.innerHTML = '<span class="empty">Hover plot for readings</span>';
+          return;
+        }
+        const values = rows.map((r) =>
+          `<span><strong style="color:${r.color}">${r.label}</strong> ${fmtValue(r.data[idx], r.digits, r.unit)}</span>`);
+        el.innerHTML = `<span class="time">${fmtTime(xs[idx])}</span>${values.join("")}`;
+      } } };
+    }
+
+    function cursorReadoutAct(elId, rows) {
+      return { hooks: { setCursor: (u) => {
+        const idx = u.cursor.idx;
+        const el = $(elId);
+        if (idx == null || idx < 0 || idx >= xsAct.length) {
+          el.innerHTML = '<span class="empty">Hover plot for readings</span>';
+          return;
+        }
+        const values = rows.map((r) =>
+          `<span><strong style="color:${r.color}">${r.label}</strong> ${
+            r.format ? r.format(r.data[idx]) : fmtValue(r.data[idx], r.digits, r.unit)
+          }</span>`);
+        el.innerHTML = `<span class="time">${fmtTime(xsAct[idx])}</span>${values.join("")}`;
+      } } };
+    }
+
+    function onOff(v) {
+      return v >= 0.5 ? "ON" : "OFF";
+    }
+
+    function actuatorPlot(cardId, readoutId, label, color, data, unit, digits, maxValue, format) {
+      const yAxis = { scale: "y", stroke: "#8b929f", grid: GRID, ticks: GRID };
+      if (format) {
+        yAxis.splits = () => [0, 1];
+        yAxis.values = (u, vals) => vals.map(format);
+      } else {
+        yAxis.values = (u, vals) => vals.map((v) => `${Math.round(v)}`);
+      }
+
+      return new uPlot({
+        width: chartWidth(cardId), height: 150,
+        legend: { show: false },
+        scales: {
+          x: xScaleAct,
+          y: { range: () => [-0.05 * maxValue, maxValue * 1.05] },
+        },
+        series: [
+          {},
+          { label, stroke: color, scale: "y", width: 2, points: { show: false } },
+        ],
+        axes: [
+          xAxis(),
+          yAxis,
+        ],
+        plugins: [
+          cursorReadoutAct(readoutId, [{ label, color, data, digits, unit, format }]),
+        ],
+      }, [xsAct, data], $(`chart-${cardId.replace("-plot-card", "")}`));
+    }
+
+    const uTemp = new uPlot({
+      width: chartWidth("temp-card"), height: 260,
+      legend: { show: false }, // using the custom legend strip below the chart
+      scales: { x: xScale, C: { range: rangeWith(() => sp.targetTemp) } },
+      series: [
+        {},
+        { label: "Inside °C",  stroke: "#d85a30", scale: "C", width: 2 },
+        { label: "Ambient °C", stroke: "#e0b020", scale: "C", width: 2 },
+      ],
+      axes: [ xAxis(), { scale: "C", stroke: "#8b929f", grid: GRID, ticks: GRID } ],
+      plugins: [
+        hLines(() => [
+          { scale: "C", value: sp.targetTemp,    color: "#d85a30", dash: [6, 4] },
+          { scale: "C", value: sp.targetCeiling, color: "#b32424", dash: [2, 4] },
+        ]),
+        cursorReadout("readout-temp", [
+          { label: "Inside", color: "#d85a30", data: tIn, digits: 2, unit: "°C" },
+          { label: "Ambient", color: "#e0b020", data: tAmb, digits: 2, unit: "°C" },
+        ]),
+      ],
+    }, [xs, tIn, tAmb], $("chart-temp"));
+
+    const uHum = new uPlot({
+      width: chartWidth("hum-card"), height: 200,
+      legend: { show: false },
+      scales: { x: xScale, "%": { range: rangeWith(() => sp.targetHumidity) } },
+      series: [
+        {},
+        { label: "Humidity %", stroke: "#4a90e2", scale: "%", width: 2 },
+      ],
+      axes: [ xAxis(), { scale: "%", stroke: "#8b929f", grid: GRID, ticks: GRID } ],
+      plugins: [
+        hLines(() => [
+          { scale: "%", value: sp.targetHumidity, color: "#4a90e2", dash: [6, 4] },
+        ]),
+        cursorReadout("readout-hum", [
+          { label: "Humidity", color: "#4a90e2", data: hum, digits: 1, unit: "%" },
+        ]),
+      ],
+    }, [xs, hum], $("chart-hum"));
+
+    const uFan = actuatorPlot("fan-plot-card", "readout-fan", "Fan", "#8bc34a", fanDuty, "%", 0, 100);
+    const uHeater = actuatorPlot("heater-plot-card", "readout-heater", "Heater", "#d85a30", heaterDuty, "", 0, 1, onOff);
+    const uHumid = actuatorPlot("humid-plot-card", "readout-humid", "Humidifier", "#4a90e2", humidDuty, "", 0, 1, onOff);
+
+    function resizeCharts() {
+      uTemp.setSize({ width: chartWidth("temp-card"), height: 260 });
+      uHum.setSize({ width: chartWidth("hum-card"), height: 200 });
+      uFan.setSize({ width: chartWidth("fan-plot-card"), height: 150 });
+      uHeater.setSize({ width: chartWidth("heater-plot-card"), height: 150 });
+      uHumid.setSize({ width: chartWidth("humid-plot-card"), height: 150 });
+    }
+
+    addEventListener("resize", resizeCharts);
+
+    document.querySelectorAll("[data-plot-toggle]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const body = $(button.dataset.plotToggle);
+        const collapsed = body.classList.toggle("hidden");
+        button.setAttribute("aria-expanded", String(!collapsed));
+        button.textContent = collapsed ? "Show" : "Hide";
+        if (!collapsed) requestAnimationFrame(resizeCharts);
+      });
+    });
+
+    // ---- telemetry: live points ------------------------------------------
+    function pushPoint(d) {
+      xs.push(Date.now() / 1000);
+      tIn.push(d.dsTemp); tAmb.push(d.bmeTemp); hum.push(d.humidity);
+      if (xs.length > MAX) { xs.shift(); tIn.shift(); tAmb.shift(); hum.shift(); }
+      uTemp.setData([xs, tIn, tAmb]);
+      uHum.setData([xs, hum]);
+      $("v-temp").textContent = d.dsTemp.toFixed(2);
+      $("v-hum").textContent  = d.humidity.toFixed(1);
+    }
+
+    function pushActuatorPoint(d) {
+      xsAct.push(Date.now() / 1000);
+      fanDuty.push(d.fanDuty ?? 0);
+      heaterDuty.push(d.heaterOn ? 1 : 0);
+      humidDuty.push(d.humidOn ? 1 : 0);
+      if (xsAct.length > MAX) { xsAct.shift(); fanDuty.shift(); heaterDuty.shift(); humidDuty.shift(); }
+      uFan.setData([xsAct, fanDuty]);
+      uHeater.setData([xsAct, heaterDuty]);
+      uHumid.setData([xsAct, humidDuty]);
+    }
+
+    // ---- state: status cards + seed controls (without fighting the user) -
+    function applyState(d) {
+      pushActuatorPoint(d);
+      $("v-temp-set").textContent = d.targetTemp.toFixed(1);
+      $("v-hum-set").textContent  = d.targetHumidity.toFixed(0);
+      $("v-ceil").textContent     = d.targetCeiling.toFixed(1);
+      $("v-ds-max").textContent   = (d.dsMaxOverTarget ?? 0).toFixed(1);
+      $("v-control-sensor").textContent = d.controlSensor || "ds";
+      $("v-fan").textContent      = d.fanDuty;
+      $("dot-heater").classList.toggle("on", d.heaterOn);
+      $("dot-humid").classList.toggle("on", d.humidOn);
+
+      if (!dirty.has("heater")) {
+        heaterOverride = d.heaterOverride || "auto";
+        setSegmentActive("data-heater", heaterOverride);
+      }
+
+      if (!dirty.has("humid")) {
+        humidOverride = d.humidOverride || "auto";
+        setSegmentActive("data-humid", humidOverride);
+      }
+      $("v-humid-note").textContent =
+        humidOverride === "off" ? "Humidifier forced off" :
+        humidOverride === "on" ? "Humidifier forced on" : "";
+
+      // Feed the threshold lines and redraw so they track a changed setpoint
+      // immediately (the y-range also keys off these, so a redraw re-frames).
+      sp.targetTemp = d.targetTemp;
+      sp.targetHumidity = d.targetHumidity;
+      sp.targetCeiling = d.targetCeiling;
+      sp.dsMaxOverTarget = d.dsMaxOverTarget;
+      uTemp.redraw(true, true); uHum.redraw(true, true); // recalc axes -> re-frame
+
+      halted = d.halted;
+      $("v-halted").textContent = halted ? "⏸ Halted" : "▶ Running";
+      powerBtn.textContent = halted ? "Start" : "Stop";
+      powerBtn.classList.toggle("stopped", halted);
+
+      // Only seed an input the user has not edited since the last send.
+      if (!dirty.has("in-temp")) tempInput.value = d.targetTemp;
+      if (!dirty.has("in-hum"))  humInput.value  = d.targetHumidity;
+      if (!dirty.has("in-ceil")) ceilInput.value = d.targetCeiling;
+      if (!dirty.has("in-ds-max")) dsMaxInput.value = d.dsMaxOverTarget ?? 0;
+      if (!dirty.has("control-sensor")) {
+        controlSensor = d.controlSensor || "ds";
+        setSegmentActive("data-control-sensor", controlSensor);
+      }
+      if (!dirty.has("fan-mode")) {
+        fanMode = d.fanManualPct == null || d.fanManualPct < 0 ? "auto" : "manual";
+        setSegmentActive("data-fan-mode", fanMode);
+      }
+      if (!dirty.has("in-fan")) {
+        const fanManualPct = d.fanManualPct == null || d.fanManualPct < 0 ? d.fanDuty : d.fanManualPct;
+        fanInput.value = fanManualPct;
+      }
+      if (!dirty.has("in-run-hours") && !dirty.has("in-run-minutes")) {
+        const runMinutes = Math.max(0, d.runMinutes == null ? 0 : d.runMinutes);
+        runHoursInput.value = Math.floor(runMinutes / 60);
+        runMinutesInput.value = runMinutes % 60;
+      }
+    }
+
+    // ---- MQTT over WebSocket ---------------------------------------------
+    const url = `ws://${location.hostname}:9001`;
+    const client = mqtt.connect(url);
+    client.on("connect", () => {
+      setStatus(`connected — ${url}`, true);
+      client.subscribe("fermenter/telemetry");
+      client.subscribe("fermenter/state");
+      client.subscribe("fermenter/alert");
+    });
+    client.on("reconnect", () => setStatus("reconnecting…", false));
+    client.on("close",     () => setStatus("disconnected", false));
+    client.on("error",     (e) => setStatus("error: " + e.message, false));
+    client.on("message", (topic, payload) => {
+      // fermenter/alert is retained and cleared with an empty payload, so handle
+      // it before the JSON parse (an empty body means "no active fault").
+      if (topic === "fermenter/alert") { applyAlert(payload.toString()); return; }
+      let d; try { d = JSON.parse(payload.toString()); } catch { return; }
+      if (topic === "fermenter/telemetry") pushPoint(d);
+      else if (topic === "fermenter/state") applyState(d);
+    });
+
+    // ---- alert: active fault banner from the twin -------------------------
+    function applyAlert(raw) {
+      let a = null;
+      if (raw) { try { a = JSON.parse(raw); } catch { a = null; } }
+      if (!a || a.active === false) { alertEl.classList.remove("show"); return; }
+      alertEl.querySelector(".code").textContent = a.code || "ALERT";
+      alertEl.querySelector(".msg").textContent = a.message || "";
+      alertEl.classList.toggle("warn", a.severity === "warning");
+      alertEl.classList.add("show");
+    }
+
+    // ---- controls --------------------------------------------------------
+    document.querySelectorAll(".stepper button").forEach((b) => {
+      b.addEventListener("click", () => {
+        const input = $(b.dataset.target);
+        const step = parseFloat(b.dataset.step);
+        const min = input.min === "" ? -Infinity : parseFloat(input.min);
+        const max = input.max === "" ? Infinity : parseFloat(input.max);
+        const next = Math.min(max, Math.max(min, parseFloat(input.value || 0) + step));
+        input.value = Number.isInteger(step) ? next.toFixed(0) : next.toFixed(1);
+        dirty.add(input.id); // a stepper press is an edit too
+        if (input.id === "in-fan") {
+          fanMode = "manual";
+          setSegmentActive("data-fan-mode", fanMode);
+          dirty.add("fan-mode");
+        }
+      });
+    });
+
+    fanInput.addEventListener("input", () => {
+      fanMode = "manual";
+      setSegmentActive("data-fan-mode", fanMode);
+      dirty.add("fan-mode");
+    });
+
+    function numberOr(value, fallback) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : fallback;
+    }
+
+    function intInRange(value, fallback, min, max) {
+      return Math.min(max, Math.max(min, Math.round(numberOr(value, fallback))));
+    }
+
+    document.querySelectorAll("[data-fan-mode]").forEach((b) => {
+      b.addEventListener("click", () => {
+        fanMode = b.dataset.fanMode;
+        setSegmentActive("data-fan-mode", fanMode);
+        dirty.add("fan-mode");
+      });
+    });
+
+    document.querySelectorAll("[data-control-sensor]").forEach((b) => {
+      b.addEventListener("click", () => {
+        controlSensor = b.dataset.controlSensor;
+        setSegmentActive("data-control-sensor", controlSensor);
+        dirty.add("control-sensor");
+      });
+    });
+
+    document.querySelectorAll("[data-heater]").forEach((b) => {
+      b.addEventListener("click", () => {
+        heaterOverride = b.dataset.heater;
+        setSegmentActive("data-heater", heaterOverride);
+        dirty.add("heater");
+      });
+    });
+
+    document.querySelectorAll("[data-humid]").forEach((b) => {
+      b.addEventListener("click", () => {
+        humidOverride = b.dataset.humid;
+        setSegmentActive("data-humid", humidOverride);
+        dirty.add("humid");
+      });
+    });
+
+    $("apply").addEventListener("click", () => {
+      // Confirmation is the fermenter/state echo, not this click.
+      const runtimeMinutes =
+        intInRange(runHoursInput.value, 0, 0, 100000) * 60 +
+        intInRange(runMinutesInput.value, 0, 0, 59);
+      client.publish("fermenter/cmd/setpoint", JSON.stringify({
+        targetTemp: numberOr(tempInput.value, sp.targetTemp),
+        targetHumidity: numberOr(humInput.value, sp.targetHumidity),
+        targetCeiling: numberOr(ceilInput.value, sp.targetCeiling),
+        dsMaxOverTarget: numberOr(dsMaxInput.value, sp.dsMaxOverTarget),
+        controlSensor,
+        fanManualPct: fanMode === "auto" ? -1 : intInRange(fanInput.value, 0, 0, 100),
+        runMinutes: runtimeMinutes,
+      }));
+
+      client.publish("fermenter/cmd/control", JSON.stringify({
+        action: heaterOverride === "auto" ? "heater_auto" : `heater_${heaterOverride}`,
+      }));
+      client.publish("fermenter/cmd/control", JSON.stringify({
+        action: humidOverride === "auto" ? "humidifier_auto" : `humidifier_${humidOverride}`,
+      }));
+
+      dirty.clear(); // hand the fields back to the device's echoed truth
+    });
+
+    powerBtn.addEventListener("click", () => {
+      // Mirrors the physical knob: start (resets run timer) vs stop.
+      client.publish("fermenter/cmd/control", JSON.stringify({
+        action: halted ? "start" : "stop",
+      }));
+    });
+
+  </script>
+</body>
+</html>

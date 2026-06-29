@@ -1,5 +1,6 @@
 #include "Display.h"
 
+#include <string.h>
 #include <Wire.h>
 #include "Config.h"
 #include "MenuController.h" // for MenuScreen
@@ -26,6 +27,21 @@ void drawEditPrompt(Adafruit_SSD1306 &oled, bool editing, int y)
     oled.setCursor(0, y);
     oled.print(editing ? "EDIT: turn knob" : "push to edit");
 }
+
+const char *controlSensorLabel(ControlSensor sensor)
+{
+    switch (sensor)
+    {
+    case CONTROL_SENSOR_DS:
+        return "DS";
+    case CONTROL_SENSOR_BME:
+        return "BME";
+    case CONTROL_SENSOR_AVERAGE:
+        return "AVG";
+    default:
+        return "?";
+    }
+}
 } // namespace
 
 Display::Display()
@@ -46,7 +62,8 @@ void Display::render(int screen, bool editing,
                      const SensorReadings &sensors,
                      const ActuatorState &act,
                      const char *title,
-                     unsigned long runStartMs)
+                     unsigned long runStartMs,
+                     const char *networkAlert)
 {
     oled_.clearDisplay();
 
@@ -55,6 +72,12 @@ void Display::render(int screen, bool editing,
     oled_.setTextColor(SSD1306_WHITE);
     oled_.setCursor(0, 0);
     oled_.printf("[ %s ]", title);
+    if (networkAlert && networkAlert[0])
+    {
+        const int16_t x = SCREEN_WIDTH - (int16_t)strlen(networkAlert) * 6;
+        oled_.setCursor(x < 0 ? 0 : x, 0);
+        oled_.print(networkAlert);
+    }
     oled_.drawFastHLine(0, 12, SCREEN_WIDTH, SSD1306_WHITE);
 
     switch (screen)
@@ -76,6 +99,12 @@ void Display::render(int screen, bool editing,
         break;
     case SCREEN_SET_CEIL:
         drawSetCeiling(sp, editing);
+        break;
+    case SCREEN_SET_DS_MAX:
+        drawSetDsMax(sp, editing);
+        break;
+    case SCREEN_SET_CONTROL_SENSOR:
+        drawSetControlSensor(sp, editing);
         break;
     case SCREEN_SET_FAN:
         drawSetFan(sp, editing);
@@ -122,7 +151,7 @@ void Display::drawOverview(const Setpoints &sp, const SensorReadings &s, const A
     else
     {
         long up = elapsedMinutes(runStartMs);
-        oled_.printf("Up   %ldh %02ldm", up / 60, up % 60);
+        oled_.printf("%s %.1f Up %ld:%02ld", controlSensorLabel(act.controlSensor), act.controlTemp, up / 60, up % 60);
     }
 }
 
@@ -161,7 +190,7 @@ void Display::drawActuators(const Setpoints &sp, const ActuatorState &act)
     else if (act.runComplete)
         oled_.print("RUN FINISHED");
     else
-        oled_.printf("Ceiling   : %.1f C", sp.targetCeiling);
+        oled_.printf("Ctrl %s: %.1f C", controlSensorLabel(act.controlSensor), act.controlTemp);
 }
 
 void Display::drawSetTemp(const Setpoints &sp, bool editing)
@@ -185,6 +214,25 @@ void Display::drawSetCeiling(const Setpoints &sp, bool editing)
     oled_.setTextSize(2);
     oled_.setCursor(0, 24);
     oled_.printf("%.1f C", sp.targetCeiling);
+    drawEditPrompt(oled_, editing, 56);
+}
+
+void Display::drawSetDsMax(const Setpoints &sp, bool editing)
+{
+    oled_.setTextSize(2);
+    oled_.setCursor(0, 22);
+    oled_.printf("+%.1f C", sp.dsMaxOverTarget);
+    oled_.setTextSize(1);
+    oled_.setCursor(0, 44);
+    oled_.printf("DS limit %.1f C", sp.targetTemp + sp.dsMaxOverTarget);
+    drawEditPrompt(oled_, editing, 56);
+}
+
+void Display::drawSetControlSensor(const Setpoints &sp, bool editing)
+{
+    oled_.setTextSize(2);
+    oled_.setCursor(0, 24);
+    oled_.print(controlSensorLabel(sp.controlSensor));
     drawEditPrompt(oled_, editing, 56);
 }
 

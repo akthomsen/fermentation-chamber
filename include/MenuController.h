@@ -13,6 +13,8 @@ enum MenuScreen : int
     SCREEN_SET_TEMP,
     SCREEN_SET_HUMID,
     SCREEN_SET_CEIL,
+    SCREEN_SET_DS_MAX,
+    SCREEN_SET_CONTROL_SENSOR,
     SCREEN_SET_FAN,
     SCREEN_SET_RUN,
     SCREEN_COUNT
@@ -48,6 +50,18 @@ public:
     // Controller without worrying about concurrent ISR updates.
     Setpoints setpoints() const;
 
+    // Apply a setpoint from outside the encoder (e.g. a remote MQTT command).
+    // Single aligned 32-bit stores are atomic on the C6, so these are safe to
+    // call from loop() context even though the encoder ISR also writes the
+    // same fields -- no critical section required.
+    void setTargetTemp(float c) { targetTemp_ = c; }
+    void setTargetHumidity(float p) { targetHumidity_ = p; }
+    void setTargetCeiling(float c) { targetCeiling_ = c; }
+    void setDsMaxOverTarget(float c) { dsMaxOverTarget_ = c; }
+    void setControlSensor(ControlSensor sensor) { controlSensor_ = sensor < CONTROL_SENSOR_COUNT ? sensor : CONTROL_SENSOR_DS; }
+    void setFanManualPct(int pct) { fanManualPct_ = pct; }
+    void setRunMinutes(long minutes) { runMinutes_ = minutes; }
+
     // Returns true (and clears the flag) when the display needs redrawing.
     bool consumeRedraw();
 
@@ -64,6 +78,9 @@ public:
     // Returns true (and clears it) when the user held the button to stop.
     bool consumeStop();
 
+    // Returns true (and clears it) when the physical controls were used.
+    bool consumeActivity();
+
 private:
     void onEncoder(); // called from the encoder ISR
     void onShortPress();
@@ -76,6 +93,7 @@ private:
     volatile int menuIndex_ = SCREEN_OVERVIEW;
     volatile bool menuChanged_ = true; // redraw display
     volatile bool editing_ = false;    // editing a setpoint with the knob?
+    volatile bool activityPending_ = false; // encoder/button activity since last loop
     bool halted_ = false;              // mirror of Controller::state().halted()
     bool restartRequested_ = false;    // short-pressed restart on the run screen
     bool stopRequested_ = false;       // held the button to stop
@@ -84,6 +102,8 @@ private:
     volatile float targetTemp_;
     volatile float targetHumidity_;
     volatile float targetCeiling_;
+    volatile float dsMaxOverTarget_;
+    volatile ControlSensor controlSensor_;
     volatile int fanManualPct_; // FAN_MANUAL_AUTO (-1) = AUTO; 0..100 = manual duty %
     volatile long runMinutes_;
 

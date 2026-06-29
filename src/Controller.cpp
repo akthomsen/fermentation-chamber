@@ -2,6 +2,53 @@
 
 #include "Config.h"
 
+namespace
+{
+    bool validTemp(float t)
+    {
+        return !isnan(t) && t >= TEMP_VALID_MIN && t <= TEMP_VALID_MAX;
+    }
+
+    bool resolveControlTemp(ControlSensor sensor, const SensorReadings &s, float &out)
+    {
+        const bool dsValid = validTemp(s.dsTemp);
+        const bool bmeValid = validTemp(s.bmeTemp);
+
+        switch (sensor)
+        {
+        case CONTROL_SENSOR_DS:
+            if (!dsValid)
+                return false;
+            out = s.dsTemp;
+            return true;
+        case CONTROL_SENSOR_BME:
+            if (!bmeValid)
+                return false;
+            out = s.bmeTemp;
+            return true;
+        case CONTROL_SENSOR_AVERAGE:
+            if (dsValid && bmeValid)
+            {
+                out = (s.dsTemp + s.bmeTemp) * 0.5f;
+                return true;
+            }
+            if (dsValid)
+            {
+                out = s.dsTemp;
+                return true;
+            }
+            if (bmeValid)
+            {
+                out = s.bmeTemp;
+                return true;
+            }
+            return false;
+        default:
+            return false;
+        }
+    }
+} // namespace
+
 void Controller::begin()
 {
     pinMode(PIN_HEATER, OUTPUT);
@@ -42,20 +89,87 @@ void Controller::stop()
 
 void Controller::restart()
 {
-    state_ = ActuatorState{};       // clear halted latch and all actuator state
-    state_.notStarted = false;      // ActuatorState defaults notStarted=true; the run is now live
-    runStartMs_ = millis();         // run timer starts over from now
+    state_ = ActuatorState{};  // clear halted latch and all actuator state
+    state_.notStarted = false; // ActuatorState defaults notStarted=true; the run is now live
+    runStartMs_ = millis();    // run timer starts over from now
+    humidOverride_ = 0;
+    state_.humidOverride = humidOverride_;
+    heaterOverride_ = 0;
+    state_.heaterOverride = heaterOverride_;
     heaterWasOn_ = false;
     heaterOnSince_ = 0;
     lockoutSince_ = 0;
+    fanFullUntilMs_ = 0;
 
     kickFan(); // spin the fan back up cleanly after a halt
+}
+
+void Controller::setHumidifierOverride(bool on)
+{
+    humidOverride_ = on ? 1 : -1;
+    state_.humidOverride = humidOverride_;
+
+    if (!on)
+    {
+        state_.humidOn = false;
+        digitalWrite(PIN_HUMIDIFIER, HUMIDIFIER_OFF);
+    }
+}
+
+void Controller::clearHumidifierOverride()
+{
+    humidOverride_ = 0;
+    state_.humidOverride = humidOverride_;
+}
+
+void Controller::setHeaterOverride(bool on)
+{
+    heaterOverride_ = on ? 1 : -1;
+    state_.heaterOverride = heaterOverride_;
+
+    if (!on)
+    {
+        state_.heaterOn = false;
+        heaterWasOn_ = false;
+        fanFullUntilMs_ = millis() + FAN_AFTER_HEAT_MS;
+        digitalWrite(PIN_HEATER, HEATER_OFF);
+    }
+}
+
+void Controller::clearHeaterOverride()
+{
+    heaterOverride_ = 0;
+    state_.heaterOverride = heaterOverride_;
+}
+
+void Controller::setFanSpeed(int pct)
+{
+    if (pct < FAN_MANUAL_AUTO)
+        pct = FAN_MANUAL_AUTO;
+    else if (pct > FAN_DUTY_MAX_PCT)
+        pct = FAN_DUTY_MAX_PCT;
+
+    fanManualPct_ = pct;
+    if (pct >= 0)
+    {
+        state_.fanOn = pct > 0;
+        state_.fanDuty = (uint8_t)pct;
+        ledcWrite(PIN_FAN, (pct * 255) / 100);
+    }
+}
+
+void Controller::setRunLimit(long minutes)
+{
+    runLimitMinutes_ = minutes < 0 ? 0 : minutes;
 }
 
 void Controller::update(const Setpoints &sp, const SensorReadings &s)
 {
     const unsigned long now = millis();
     const unsigned long elapsedMs = now - runStartMs_;
+
+    state_.humidOverride = humidOverride_;
+    state_.heaterOverride = heaterOverride_;
 
     // Run-duration limit: once the configured time has elapsed, shut everything
     // off and stay off until restart() is called (e.g. from the Run Time menu).
@@ -76,42 +190,33 @@ void Controller::update(const Setpoints &sp, const SensorReadings &s)
     if (state_.heaterLockout && now - lockoutSince_ > HEAT_COOLDOWN_MS)
         state_.heaterLockout = false;
 
-    // Control on the average of the two temperature sensors. A sensor is
-    // ignored if it reads NaN or sits outside the valid band (a DS18B20 returns
-    // -127 when unplugged), so a single failed sensor neither drags the average
-    // off nor masks the other one. With no usable sensor the heater is faulted.
-    const bool dsValid = !isnan(s.dsTemp) && s.dsTemp >= TEMP_VALID_MIN && s.dsTemp <= TEMP_VALID_MAX;
-    float tempSum = 0.0f;
-    int tempCount = 0;
-    if (dsValid)
-    {
-        tempSum += s.dsTemp;
-        ++tempCount;
-    }
-    if (!isnan(s.bmeTemp) && s.bmeTemp >= TEMP_VALID_MIN && s.bmeTemp <= TEMP_VALID_MAX)
-    {
-        tempSum += s.bmeTemp;
-        ++tempCount;
-    }
-    const bool tempValid = tempCount > 0;
-    const float controlTemp = tempValid ? tempSum / tempCount : 0.0f;
+    state_.controlSensor = sp.controlSensor < CONTROL_SENSOR_COUNT ? sp.controlSensor : CONTROL_SENSOR_DS;
 
-    // Normal hysteresis, but shut off slightly BELOW target so residual heat
-    // carries the temperature the rest of the way up.
-    if (tempValid && controlTemp <= sp.targetTemp - HEATER_OFFSET - HYSTERESIS)
+    float controlTemp = NAN;
+    const bool tempValid = resolveControlTemp(state_.controlSensor, s, controlTemp);
+    state_.controlTemp = tempValid ? controlTemp : NAN;
+    const bool dsValid = validTemp(s.dsTemp);
+
+    // Hysteresis band: turn ON once we fall HYSTERESIS below target, and don't
+    // turn OFF again until we reach target. The two thresholds must differ or the
+    // dead-band collapses to zero width and the heater short-cycles (chatters).
+    // Shutting off at target lets residual heat carry the rest of the way up.
+    if (tempValid && controlTemp <= sp.targetTemp - HYSTERESIS)
         state_.heaterOn = true;
-    else if (controlTemp >= sp.targetTemp - HEATER_OFFSET)
+    else if (controlTemp >= sp.targetTemp)
         state_.heaterOn = false;
 
-    // Safety: no usable sensor or above the hard ceiling -> force off.
-    state_.heaterFault = !tempValid || (controlTemp >= sp.targetCeiling);
+    if (heaterOverride_ < 0)
+        state_.heaterOn = false;
+    else if (heaterOverride_ > 0)
+        state_.heaterOn = true;
+
+    // Safety: selected sensor invalid, selected control source above the hard
+    // ceiling, or the DS probe above its target-relative guard -> force off.
+    const float dsLimit = sp.targetTemp + (sp.dsMaxOverTarget < 0.0f ? 0.0f : sp.dsMaxOverTarget);
+    const bool dsOverLimit = dsValid && s.dsTemp >= dsLimit;
+    state_.heaterFault = !tempValid || (tempValid && controlTemp >= sp.targetCeiling) || dsOverLimit;
     if (state_.heaterFault || state_.heaterLockout)
-        state_.heaterOn = false;
-
-    // DS probe guard: never heat while the DS sensor reads at/above target, even
-    // if a cooler BME drags the average below target and would otherwise call for
-    // heat. The DS probe alone can veto heating, never demand it.
-    if (dsValid && s.dsTemp >= sp.targetTemp)
         state_.heaterOn = false;
 
     // Max continuous-on backstop: if the heater has run too long without the
@@ -127,13 +232,19 @@ void Controller::update(const Setpoints &sp, const SensorReadings &s)
             lockoutSince_ = now;
         }
     }
+    if (heaterWasOn_ && !state_.heaterOn)
+        fanFullUntilMs_ = now + FAN_AFTER_HEAT_MS;
     heaterWasOn_ = state_.heaterOn;
 
     digitalWrite(PIN_HEATER, state_.heaterOn ? HEATER_ON : HEATER_OFF);
 
     // Humidifier: add moisture if too dry, stop once above target. Resolved
     // before the fan so the fan can react to the humidifier's final state.
-    if (s.humidity < sp.targetHumidity - HYSTERESIS)
+    if (humidOverride_ < 0)
+        state_.humidOn = false;
+    else if (humidOverride_ > 0)
+        state_.humidOn = true;
+    else if (s.humidity < sp.targetHumidity - HYSTERESIS)
         state_.humidOn = true;
     else if (s.humidity > sp.targetHumidity + HYSTERESIS)
         state_.humidOn = false;
@@ -144,18 +255,18 @@ void Controller::update(const Setpoints &sp, const SensorReadings &s)
     // humidity uniform and to distribute heat/moisture from the other actuators.
     // In AUTO it therefore runs continuously for the whole run, with the speed
     // set by what is being conditioned (priority high to low):
-    //   heater on    -> full speed, distribute heat so it never pools at the element
-    //   humidifier on -> 70%, spread moisture (heater wins if both are on)
-    //   otherwise     -> circulation floor, just keep the air mixed
-    // Manual override wins over all of it (any 0..100%, so manual can also stop
-    // the fan); with no usable sensor AUTO runs full as a failsafe.
+    //   heater on/recently off -> full speed, distribute heat so it never pools
+    //   no usable control temp -> full speed as a failsafe
+    //   manual fan setting     -> requested 0..100%
+    //   humidifier on          -> 70%, spread moisture
+    //   otherwise              -> circulation floor, just keep the air mixed
     int fanPct;
-    if (sp.fanManualPct >= 0)
-        fanPct = sp.fanManualPct > FAN_DUTY_MAX_PCT ? FAN_DUTY_MAX_PCT : sp.fanManualPct;
+    if (state_.heaterOn || (long)(fanFullUntilMs_ - now) > 0)
+        fanPct = FAN_DUTY_MAX_PCT; // heater wins
     else if (!tempValid)
         fanPct = FAN_DUTY_MAX_PCT; // blind -> full circulation
-    else if (state_.heaterOn)
-        fanPct = FAN_DUTY_MAX_PCT; // heater wins
+    else if (sp.fanManualPct >= 0)
+        fanPct = sp.fanManualPct > FAN_DUTY_MAX_PCT ? FAN_DUTY_MAX_PCT : sp.fanManualPct;
     else if (state_.humidOn)
         fanPct = FAN_DUTY_HUMID_PCT;
     else

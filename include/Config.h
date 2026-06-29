@@ -59,12 +59,13 @@ constexpr int OLED_RESET = -1;
 constexpr float HYSTERESIS = 0.5f; // dead-band to stop rapid switching
 
 // --- Heater safety / behaviour ---
-constexpr float HEATER_OFFSET = 0.5f;                           // turn off this far BELOW target (residual heat keeps rising)
-constexpr float DEFAULT_CEILING = 45.0f;                        // default hard over-temp cutoff (editable in menu)
-constexpr float TEMP_VALID_MIN = 0.0f;                          // below this = sensor fault (DS18B20 returns -127 if unplugged)
-constexpr float TEMP_VALID_MAX = 70.0f;                         // above this = sensor fault / runaway
-constexpr unsigned long MAX_HEAT_MS = 60UL * 60UL * 1000UL;     // max continuous heater-on time (60 min)
-constexpr unsigned long HEAT_COOLDOWN_MS = 5UL * 60UL * 1000UL; // forced off period after a max-on trip (5 min)
+constexpr float DEFAULT_CEILING = 60.0f;                         // default hard over-temp cutoff (editable in menu)
+constexpr float DEFAULT_DS_MAX_OVER_TARGET = 2.0f;               // DS probe may rise this far above target before heat is vetoed
+constexpr float TEMP_VALID_MIN = 0.0f;                           // below this = sensor fault (DS18B20 returns -127 if unplugged)
+constexpr float TEMP_VALID_MAX = 70.0f;                          // above this = sensor fault / runaway
+constexpr unsigned long MAX_HEAT_MS = 60UL * 60UL * 1000UL;      // max continuous heater-on time (60 min)
+constexpr unsigned long HEAT_COOLDOWN_MS = 5UL * 60UL * 1000UL;  // forced off period after a max-on trip (5 min)
+constexpr unsigned long FAN_AFTER_HEAT_MS = 2UL * 60UL * 1000UL; // keep fan full speed after heater shuts off
 
 // --- Default setpoints ---
 constexpr float DEFAULT_TARGET_TEMP = 32.0f;     // degrees C
