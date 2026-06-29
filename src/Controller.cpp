@@ -239,11 +239,17 @@ void Controller::update(const Setpoints &sp, const SensorReadings &s)
     digitalWrite(PIN_HEATER, state_.heaterOn ? HEATER_ON : HEATER_OFF);
 
     // Humidifier: add moisture if too dry, stop once above target. Resolved
-    // before the fan so the fan can react to the humidifier's final state.
+    // before the fan so the fan can react to the humidifier's final state. A
+    // forced-on override still wins, but in AUTO an unreadable humidity sensor
+    // forces the humidifier OFF rather than running it blind (failsafe: a stuck
+    // humidifier saturates the chamber).
+    const bool humidityValid = isfinite(s.humidity);
     if (humidOverride_ < 0)
         state_.humidOn = false;
     else if (humidOverride_ > 0)
         state_.humidOn = true;
+    else if (!humidityValid)
+        state_.humidOn = false;
     else if (s.humidity < sp.targetHumidity - HYSTERESIS)
         state_.humidOn = true;
     else if (s.humidity > sp.targetHumidity + HYSTERESIS)

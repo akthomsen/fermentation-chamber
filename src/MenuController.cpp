@@ -4,7 +4,7 @@
 
 // Labels shown in the screen title bar, indexed by MenuScreen.
 static const char *const kMenuLabels[SCREEN_COUNT] = {
-    "Overview", "Sensors", "Actuators", "Set Temp", "Set Humid", "Max Temp", "DS Max", "Control", "Set Fan", "Run Time"};
+    "Overview", "Sensors", "Actuators", "Network", "Set Temp", "Set Humid", "Max Temp", "DS Max", "Control", "Set Fan", "Run Time"};
 
 // Quadrature decode table: maps a 4-bit (prev<<2 | now) state to a step.
 // Invalid transitions (contact bounce) decode to 0, so noise is ignored.
@@ -75,6 +75,14 @@ bool MenuController::consumeStop()
     if (!stopRequested_)
         return false;
     stopRequested_ = false;
+    return true;
+}
+
+bool MenuController::consumeNetworkAction()
+{
+    if (!networkActionRequested_)
+        return false;
+    networkActionRequested_ = false;
     return true;
 }
 
@@ -169,9 +177,28 @@ void IRAM_ATTR MenuController::onEncoder()
         break;
     }
     case SCREEN_SET_RUN:
-        runMinutes_ = runMinutes_ + dir * 5 * mult; // 5 min steps
-        if (runMinutes_ < 0)
-            runMinutes_ = 0;
+        if (!halted_)
+        {
+            // Run active: the knob adjusts time REMAINING. Keep the stored total
+            // as elapsed + remaining so the run finishes the right amount of time
+            // from NOW and uptime keeps counting from the real start. Works even
+            // from OFF (remaining clamps up from 0), so you can also dial in a
+            // fresh full duration mid-run.
+            long remaining = runMinutes_ - runElapsedMin_;
+            if (remaining < 0)
+                remaining = 0;
+            remaining += dir * 5 * mult; // 5 min steps
+            if (remaining < 0)
+                remaining = 0;
+            runMinutes_ = runElapsedMin_ + remaining;
+        }
+        else
+        {
+            // Halted/ready: set the full duration for the next run.
+            runMinutes_ = runMinutes_ + dir * 5 * mult; // 5 min steps
+            if (runMinutes_ < 0)
+                runMinutes_ = 0;
+        }
         break;
     default:
         break;
@@ -218,6 +245,15 @@ void MenuController::poll()
 
 void MenuController::onShortPress()
 {
+    // On the Network screen the button is the connect/disconnect action, not an
+    // edit toggle. main decides which based on the current link state.
+    if (menuIndex_ == SCREEN_NETWORK)
+    {
+        networkActionRequested_ = true;
+        menuChanged_ = true;
+        return;
+    }
+
     // On the Run Time screen, once the chamber is halted the button restarts it
     // rather than entering edit mode.
     if (menuIndex_ == SCREEN_SET_RUN && halted_)

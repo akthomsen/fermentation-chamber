@@ -13,12 +13,15 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
+#include <esp_system.h>
+#include <esp_task_wdt.h>
 
 #include "Config.h"
 #include "Sensors.h"
 #include "Controller.h"
 #include "MenuController.h"
 #include "Display.h"
+#include "NetStatus.h"
 #include "Secrets.h"
 
 static Sensors sensors;
@@ -29,47 +32,42 @@ static Display display;
 static WiFiClient net;
 static PubSubClient mqtt(net);
 
+static NetworkStatus netStatus;
 static unsigned long lastSensorRead = 0;
-static unsigned long lastUserActivity = 0;
-static unsigned long lastWiFiAttempt = 0;
-static unsigned long lastMqttAttempt = 0;
-static wl_status_t lastWiFiStatus = WL_IDLE_STATUS;
-static bool mqttWasConnected = false;
-static bool wifiBeginCalled = false;
 
-constexpr unsigned long WIFI_RETRY_MS = 10000;
-constexpr unsigned long MQTT_RETRY_MS = 30000;
-constexpr unsigned long MQTT_USER_IDLE_MS = 3000;
+// The chamber control loop never blocks on the network: WiFi+MQTT are attempted
+// exactly once at boot and then only on an explicit user action from the Network
+// screen. These bound the one intentional blocking window (boot/retry) and the
+// task-watchdog timeout that catches a genuinely hung loop.
+constexpr unsigned long WIFI_CONNECT_TIMEOUT_MS = 8000;
+constexpr unsigned long WDT_TIMEOUT_MS = 12000;
 
-enum NetworkAlert : uint8_t
+// Map an esp_reset_reason() to a short name so the boot log records WHY the
+// device last reset (power-on vs. crash vs. watchdog). This is the primary
+// breadcrumb for debugging a field fault after the fact.
+static const char *resetReasonName(esp_reset_reason_t r)
 {
-    NETWORK_ALERT_NONE,
-    NETWORK_ALERT_WIFI,
-    NETWORK_ALERT_MQTT,
-};
-
-static NetworkAlert lastNetworkAlert = NETWORK_ALERT_WIFI;
-
-static const char *networkAlertText(NetworkAlert alert)
-{
-    switch (alert)
+    switch (r)
     {
-    case NETWORK_ALERT_WIFI:
-        return "WiFi!";
-    case NETWORK_ALERT_MQTT:
-        return "MQTT!";
+    case ESP_RST_POWERON:
+        return "power-on";
+    case ESP_RST_SW:
+        return "sw-reset";
+    case ESP_RST_PANIC:
+        return "panic/crash";
+    case ESP_RST_INT_WDT:
+        return "int-watchdog";
+    case ESP_RST_TASK_WDT:
+        return "task-watchdog";
+    case ESP_RST_WDT:
+        return "other-watchdog";
+    case ESP_RST_BROWNOUT:
+        return "brownout";
+    case ESP_RST_DEEPSLEEP:
+        return "deep-sleep";
     default:
-        return "";
+        return "unknown";
     }
-}
-
-static NetworkAlert currentNetworkAlert()
-{
-    if (WiFi.status() != WL_CONNECTED)
-        return NETWORK_ALERT_WIFI;
-    if (!mqtt.connected())
-        return NETWORK_ALERT_MQTT;
-    return NETWORK_ALERT_NONE;
 }
 
 static const char *mqttStateName(int state)
@@ -101,49 +99,40 @@ static const char *mqttStateName(int state)
     }
 }
 
-static void noteNetworkAlertChange()
+// Recompute the cached connectivity snapshot from the live WiFi/MQTT state.
+// Pure: it only writes netStatus (no network I/O), so it is cheap to call every
+// loop. The detail string carries the exact failure reason for the OLED.
+static void computeNetworkStatus()
 {
-    const NetworkAlert alert = currentNetworkAlert();
-    if (alert != lastNetworkAlert)
+    netStatus.wifiConnected = WiFi.status() == WL_CONNECTED;
+    netStatus.mqttConnected = netStatus.wifiConnected && mqtt.connected();
+
+    if (netStatus.wifiConnected)
     {
-        lastNetworkAlert = alert;
-        menu.requestRedraw();
+        const String ip = WiFi.localIP().toString();
+        strncpy(netStatus.ip, ip.c_str(), sizeof(netStatus.ip) - 1);
+        netStatus.ip[sizeof(netStatus.ip) - 1] = '\0';
     }
+    else
+    {
+        strcpy(netStatus.ip, "-");
+    }
+
+    if (!netStatus.wifiConnected)
+        snprintf(netStatus.detail, sizeof(netStatus.detail), "WiFi down");
+    else if (netStatus.mqttConnected)
+        snprintf(netStatus.detail, sizeof(netStatus.detail), "connected");
+    else
+        snprintf(netStatus.detail, sizeof(netStatus.detail), "rc%d %s",
+                 mqtt.state(), mqttStateName(mqtt.state()));
 }
 
-// Start or retry WiFi without blocking chamber control.
-static void serviceWiFi()
+// Paint the Network screen right now (used to show live progress during the one
+// intentional blocking connect, so the wait is always visible to the user).
+static void renderNetworkScreen()
 {
-    const unsigned long now = millis();
-    const wl_status_t status = WiFi.status();
-
-    if (status != lastWiFiStatus)
-    {
-        lastWiFiStatus = status;
-        if (status == WL_CONNECTED)
-        {
-            Serial.printf("WiFi OK: %s RSSI %d dBm\n",
-                          WiFi.localIP().toString().c_str(), WiFi.RSSI());
-        }
-        else
-        {
-            Serial.printf("WiFi status=%d\n", status);
-        }
-        noteNetworkAlertChange();
-    }
-
-    if (status == WL_CONNECTED)
-        return;
-
-    if (!wifiBeginCalled || now - lastWiFiAttempt >= WIFI_RETRY_MS)
-    {
-        wifiBeginCalled = true;
-        lastWiFiAttempt = now;
-        WiFi.mode(WIFI_STA);
-        WiFi.begin(WIFI_SSID, WIFI_PASS);
-        Serial.println("WiFi connect attempt");
-        noteNetworkAlertChange();
-    }
+    display.render(SCREEN_NETWORK, false, menu.setpoints(), sensors.readings(),
+                   controller.state(), "Network", controller.runStartMs(), netStatus);
 }
 
 // Topics. Telemetry (MQTT_TOPIC, from Secrets.h) is the live, un-retained
@@ -270,51 +259,53 @@ static void publishState()
         Serial.println("State publish failed");
 }
 
-// Try to establish MQTT once per retry interval. MQTT must never block the
-// chamber loop; local controls and safety continue while the broker is down.
-static void serviceMqtt(bool allowConnect)
+// One-shot bring-up of the whole network stack (WiFi then MQTT). It blocks while
+// connecting -- but only ever at boot or on an explicit user retry -- and paints
+// progress on the OLED so the wait is visible. Nothing in the steady-state loop
+// blocks on the network, so chamber control and the encoder UI keep running even
+// with the broker down.
+static void networkConnect()
 {
+    netStatus.connecting = true;
+
     if (WiFi.status() != WL_CONNECTED)
     {
-        if (mqttWasConnected)
+        snprintf(netStatus.detail, sizeof(netStatus.detail), "WiFi...");
+        renderNetworkScreen();
+
+        Serial.println("WiFi connect attempt");
+        WiFi.persistent(false);
+        WiFi.mode(WIFI_STA);
+        WiFi.setAutoReconnect(false); // one-shot: no silent background reconnects
+        WiFi.begin(WIFI_SSID, WIFI_PASS);
+
+        const unsigned long start = millis();
+        while (WiFi.status() != WL_CONNECTED && millis() - start < WIFI_CONNECT_TIMEOUT_MS)
         {
-            mqttWasConnected = false;
-            Serial.println("MQTT offline: WiFi down");
-            noteNetworkAlertChange();
+            delay(100);
+            esp_task_wdt_reset(); // harmless before the loop task is subscribed
         }
-        return;
     }
 
-    if (mqtt.connected())
+    if (WiFi.status() != WL_CONNECTED)
     {
-        mqtt.loop();
-        if (!mqttWasConnected)
-        {
-            mqttWasConnected = true;
-            noteNetworkAlertChange();
-        }
+        Serial.println("WiFi connect FAILED");
+        netStatus.connecting = false;
+        computeNetworkStatus();
+        renderNetworkScreen();
         return;
     }
+    Serial.printf("WiFi OK: %s RSSI %d dBm\n",
+                  WiFi.localIP().toString().c_str(), WiFi.RSSI());
 
-    if (mqttWasConnected)
-    {
-        mqttWasConnected = false;
-        Serial.printf("MQTT disconnected rc=%d (%s)\n", mqtt.state(), mqttStateName(mqtt.state()));
-        noteNetworkAlertChange();
-    }
-
-    if (!allowConnect)
-        return;
-
-    const unsigned long now = millis();
-    if (lastMqttAttempt != 0 && now - lastMqttAttempt < MQTT_RETRY_MS)
-        return;
-    lastMqttAttempt = now;
+    // WiFi is up; make exactly one MQTT attempt.
+    netStatus.wifiConnected = true;
+    snprintf(netStatus.detail, sizeof(netStatus.detail), "MQTT...");
+    renderNetworkScreen();
 
     Serial.printf("MQTT connect attempt %s:%d\n", MQTT_BROKER_IP, MQTT_PORT);
     if (mqtt.connect("fermenter-c6"))
     {
-        mqttWasConnected = true;
         Serial.println("MQTT OK");
         mqtt.subscribe(TOPIC_CMD_SETPOINT);
         mqtt.subscribe(TOPIC_CMD_CONTROL);
@@ -324,7 +315,23 @@ static void serviceMqtt(bool allowConnect)
     {
         Serial.printf("MQTT fail rc=%d (%s)\n", mqtt.state(), mqttStateName(mqtt.state()));
     }
-    noteNetworkAlertChange();
+
+    netStatus.connecting = false;
+    computeNetworkStatus();
+    renderNetworkScreen();
+}
+
+// Tear the whole stack down on user request (single push on the Network screen).
+// Local chamber control is unaffected -- it never depended on the network.
+static void networkDisconnect()
+{
+    Serial.println("Network disconnect (user)");
+    mqtt.disconnect();
+    WiFi.disconnect(true); // drop the association and power the radio down
+    WiFi.mode(WIFI_OFF);
+    netStatus.connecting = false;
+    computeNetworkStatus();
+    renderNetworkScreen();
 }
 
 // Handle inbound commands. Runs in loop() context (via mqtt.loop()), not an
@@ -500,13 +507,26 @@ static void waitForDevice(bool ok, const char *failMessage)
 void setup()
 {
     Serial.begin(115200);
+    delay(50);
+    const esp_reset_reason_t rr = esp_reset_reason();
+    Serial.printf("\n[boot] reset reason: %d (%s)\n", (int)rr, resetReasonName(rr));
+
     Wire.begin(PIN_SDA, PIN_SCL);
 
     menu.begin();
-    controller.begin();
+    controller.begin(); // drive every actuator to a known OFF state first
 
     waitForDevice(display.begin(), "SSD1306 failed");
-    waitForDevice(sensors.begin(), "BME280 not found!");
+
+    // BME is required. Block (every actuator is already OFF, so this is safe) but
+    // surface the fault on the OLED too, not just Serial, so a headless unit is
+    // still diagnosable.
+    while (!sensors.begin())
+    {
+        Serial.println("BME280 not found!");
+        display.showMessage("BME280", "not found");
+        delay(1000);
+    }
 
     sensors.read();
     controller.update(menu.setpoints(), sensors.readings());
@@ -517,7 +537,20 @@ void setup()
     if (!mqtt.setBufferSize(MQTT_BUFFER_SIZE))
         Serial.println("MQTT buffer resize failed");
     mqtt.setCallback(onMqtt);
-    serviceWiFi();
+
+    networkConnect(); // one attempt at boot; no automatic retries afterward
+
+    // Arm the task watchdog AFTER the intentional boot-time blocking. From here a
+    // stalled loop() -- e.g. a locked I2C bus while the heater is ON -- resets the
+    // chip, and controller.begin() drives every actuator OFF again on reboot.
+    esp_task_wdt_config_t wdtCfg = {
+        .timeout_ms = WDT_TIMEOUT_MS,
+        .idle_core_mask = 0,
+        .trigger_panic = true,
+    };
+    if (esp_task_wdt_init(&wdtCfg) == ESP_ERR_INVALID_STATE)
+        esp_task_wdt_reconfigure(&wdtCfg); // already inited by the Arduino core
+    esp_task_wdt_add(NULL);
 
     Serial.println("Ready.");
 }
@@ -536,6 +569,7 @@ void loop()
         const Setpoints sp = menu.setpoints();
         controller.update(sp, sensors.readings());
         menu.setHalted(controller.state().halted());
+        menu.setRunElapsed((long)((millis() - controller.runStartMs()) / 60000UL));
         menu.requestRedraw(); // refresh display with new data
 
         const SensorReadings &s = sensors.readings();
@@ -559,8 +593,6 @@ void loop()
 
     // Read the button (short press = tap, 5 s hold = stop).
     menu.poll();
-    if (menu.consumeActivity())
-        lastUserActivity = millis();
 
     // Hold-to-stop: shut everything off until the user restarts.
     if (menu.consumeStop())
@@ -583,11 +615,32 @@ void loop()
     {
         display.render(menu.screen(), menu.isEditing(),
                        menu.setpoints(), sensors.readings(), controller.state(),
-                       menu.screenLabel(), controller.runStartMs(),
-                       networkAlertText(currentNetworkAlert()));
+                       menu.screenLabel(), controller.runStartMs(), netStatus);
     }
 
-    serviceWiFi();
-    const bool uiIdle = !menu.isEditing() && millis() - lastUserActivity >= MQTT_USER_IDLE_MS;
-    serviceMqtt(uiIdle);
+    // Network is never auto-retried: just track status, pump MQTT while it is up,
+    // and honour an explicit connect/disconnect from the Network screen.
+    const bool prevWifi = netStatus.wifiConnected;
+    const bool prevMqtt = netStatus.mqttConnected;
+    computeNetworkStatus();
+    if (netStatus.wifiConnected != prevWifi || netStatus.mqttConnected != prevMqtt)
+    {
+        Serial.printf("[net] wifi=%d mqtt=%d (%s)\n",
+                      netStatus.wifiConnected, netStatus.mqttConnected, netStatus.detail);
+        menu.requestRedraw();
+    }
+    if (netStatus.mqttConnected)
+        mqtt.loop();
+
+    // A single push on the Network screen toggles: connect/retry when down,
+    // disconnect when fully connected.
+    if (menu.consumeNetworkAction())
+    {
+        if (netStatus.mqttConnected)
+            networkDisconnect();
+        else
+            networkConnect();
+    }
+
+    esp_task_wdt_reset(); // pet the watchdog: we completed a clean loop iteration
 }

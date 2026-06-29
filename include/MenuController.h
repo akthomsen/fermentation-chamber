@@ -10,6 +10,7 @@ enum MenuScreen : int
     SCREEN_OVERVIEW = 0,
     SCREEN_SENSORS,
     SCREEN_ACTUATORS,
+    SCREEN_NETWORK,
     SCREEN_SET_TEMP,
     SCREEN_SET_HUMID,
     SCREEN_SET_CEIL,
@@ -72,8 +73,18 @@ public:
     // the Run Time screen offers a restart instead of edit. Call each loop.
     void setHalted(bool halted) { halted_ = halted; }
 
+    // Mirror the live run elapsed-minutes (now - runStart). While a run is active
+    // the Run Time knob edits time REMAINING; knowing elapsed lets it keep the
+    // stored total = elapsed + remaining, so uptime keeps its real start.
+    void setRunElapsed(long minutes) { runElapsedMin_ = minutes < 0 ? 0 : minutes; }
+
     // Returns true (and clears it) when the user asked to restart the run.
     bool consumeRestart();
+
+    // Returns true (and clears it) when the user pushed on the Network screen.
+    // A single action the caller interprets as connect/retry or disconnect
+    // depending on the current link state.
+    bool consumeNetworkAction();
 
     // Returns true (and clears it) when the user held the button to stop.
     bool consumeStop();
@@ -95,8 +106,10 @@ private:
     volatile bool editing_ = false;    // editing a setpoint with the knob?
     volatile bool activityPending_ = false; // encoder/button activity since last loop
     bool halted_ = false;              // mirror of Controller::state().halted()
+    volatile long runElapsedMin_ = 0;  // mirror of the live run elapsed-minutes
     bool restartRequested_ = false;    // short-pressed restart on the run screen
     bool stopRequested_ = false;       // held the button to stop
+    bool networkActionRequested_ = false; // short-pressed on the Network screen
 
     // --- Setpoints (changed with the encoder) ---
     volatile float targetTemp_;

@@ -57,13 +57,25 @@ bool Display::begin()
     return true;
 }
 
+void Display::showMessage(const char *line1, const char *line2)
+{
+    oled_.clearDisplay();
+    oled_.setTextColor(SSD1306_WHITE);
+    oled_.setTextSize(2);
+    oled_.setCursor(0, 12);
+    oled_.println(line1);
+    oled_.setCursor(0, 36);
+    oled_.println(line2);
+    oled_.display();
+}
+
 void Display::render(int screen, bool editing,
                      const Setpoints &sp,
                      const SensorReadings &sensors,
                      const ActuatorState &act,
                      const char *title,
                      unsigned long runStartMs,
-                     const char *networkAlert)
+                     const NetworkStatus &net)
 {
     oled_.clearDisplay();
 
@@ -72,11 +84,16 @@ void Display::render(int screen, bool editing,
     oled_.setTextColor(SSD1306_WHITE);
     oled_.setCursor(0, 0);
     oled_.printf("[ %s ]", title);
-    if (networkAlert && networkAlert[0])
+
+    // Corner alert chip flags the first broken link, so any screen shows at a
+    // glance that connectivity is down. Suppressed on the Network screen itself,
+    // which already spells the state out in full.
+    const char *alert = !net.wifiConnected ? "WiFi!" : !net.mqttConnected ? "MQTT!" : "";
+    if (screen != SCREEN_NETWORK && alert[0])
     {
-        const int16_t x = SCREEN_WIDTH - (int16_t)strlen(networkAlert) * 6;
+        const int16_t x = SCREEN_WIDTH - (int16_t)strlen(alert) * 6;
         oled_.setCursor(x < 0 ? 0 : x, 0);
-        oled_.print(networkAlert);
+        oled_.print(alert);
     }
     oled_.drawFastHLine(0, 12, SCREEN_WIDTH, SSD1306_WHITE);
 
@@ -90,6 +107,9 @@ void Display::render(int screen, bool editing,
         break;
     case SCREEN_ACTUATORS:
         drawActuators(sp, act);
+        break;
+    case SCREEN_NETWORK:
+        drawNetwork(net);
         break;
     case SCREEN_SET_TEMP:
         drawSetTemp(sp, editing);
@@ -133,25 +153,34 @@ void Display::drawOverview(const Setpoints &sp, const SensorReadings &s, const A
 
     if (act.notStarted)
     {
-        oled_.print("Time READY");
+        if (sp.runMinutes > 0)
+            oled_.printf("READY goal %ld:%02ld", sp.runMinutes / 60, sp.runMinutes % 60);
+        else
+            oled_.print("READY (no limit)");
     }
     else if (act.stopped)
     {
-        oled_.print("Time STOPPED");
+        oled_.print("STOPPED");
     }
     else if (act.runComplete)
     {
-        oled_.print("Time FINISHED");
+        oled_.print("FINISHED");
     }
     else if (sp.runMinutes > 0)
     {
-        long left = remainingMinutes(sp, runStartMs);
-        oled_.printf("Left %ldh %02ldm", left / 60, left % 60);
+        // Running with a time limit: uptime (u), remaining (l) and goal (g) on
+        // one line so the whole run is visible at a glance. Single-letter labels
+        // keep it within 128 px even for multi-hour runs.
+        const long up = elapsedMinutes(runStartMs);
+        const long left = remainingMinutes(sp, runStartMs);
+        oled_.printf("u%ld:%02ld l%ld:%02ld g%ld:%02ld",
+                     up / 60, up % 60, left / 60, left % 60,
+                     sp.runMinutes / 60, sp.runMinutes % 60);
     }
     else
     {
-        long up = elapsedMinutes(runStartMs);
-        oled_.printf("%s %.1f Up %ld:%02ld", controlSensorLabel(act.controlSensor), act.controlTemp, up / 60, up % 60);
+        const long up = elapsedMinutes(runStartMs);
+        oled_.printf("Up %ld:%02ld  no limit", up / 60, up % 60);
     }
 }
 
@@ -191,6 +220,28 @@ void Display::drawActuators(const Setpoints &sp, const ActuatorState &act)
         oled_.print("RUN FINISHED");
     else
         oled_.printf("Ctrl %s: %.1f C", controlSensorLabel(act.controlSensor), act.controlTemp);
+}
+
+void Display::drawNetwork(const NetworkStatus &net)
+{
+    oled_.setTextSize(1);
+    oled_.setCursor(0, 16);
+    oled_.printf("WiFi: %s", net.wifiConnected ? net.ip : "DOWN");
+    oled_.setCursor(0, 28);
+    oled_.printf("MQTT: %s", net.mqttConnected ? "OK" : "DOWN");
+
+    // Reason / progress line: the exact failure reason (e.g. "rc-2 ...") is the
+    // whole point of this screen -- it tells the user WHY the link is down.
+    oled_.setCursor(0, 40);
+    oled_.print(net.detail);
+
+    oled_.setCursor(0, 52);
+    if (net.connecting)
+        oled_.print("Connecting...");
+    else if (net.mqttConnected)
+        oled_.print("push to disconnect");
+    else
+        oled_.print("push to connect");
 }
 
 void Display::drawSetTemp(const Setpoints &sp, bool editing)
@@ -250,9 +301,19 @@ void Display::drawSetFan(const Setpoints &sp, bool editing)
 void Display::drawSetRun(const Setpoints &sp, const ActuatorState &act, bool editing,
                          unsigned long runStartMs)
 {
+    const bool running = !act.halted();
+
+    // Big number: while a run is active it shows time REMAINING (and the knob
+    // edits that), so editing is intuitive -- the value on screen is the value
+    // you change. While halted it shows the full duration set for the next run.
     oled_.setTextSize(2);
     oled_.setCursor(0, 22);
-    if (sp.runMinutes <= 0)
+    if (running && sp.runMinutes > 0)
+    {
+        long left = remainingMinutes(sp, runStartMs);
+        oled_.printf("%ldh %02ldm", left / 60, left % 60);
+    }
+    else if (sp.runMinutes <= 0)
         oled_.print("OFF");
     else
         oled_.printf("%ldh %02ldm", sp.runMinutes / 60, sp.runMinutes % 60);
@@ -260,21 +321,17 @@ void Display::drawSetRun(const Setpoints &sp, const ActuatorState &act, bool edi
     oled_.setTextSize(1);
     oled_.setCursor(0, 44);
     if (act.notStarted)
-    {
         oled_.print("READY");
-    }
     else if (act.stopped)
-    {
         oled_.print("STOPPED");
-    }
     else if (act.runComplete)
-    {
         oled_.print("FINISHED");
-    }
-    else if (sp.runMinutes > 0)
+    else
     {
-        long left = remainingMinutes(sp, runStartMs);
-        oled_.printf("left: %ldh %02ldm", left / 60, left % 60);
+        // Running: show uptime (time since start), the true start-to-finish clock,
+        // unaffected by edits to the remaining time.
+        long up = elapsedMinutes(runStartMs);
+        oled_.printf("up %ldh %02ldm", up / 60, up % 60);
     }
 
     // While halted the button starts/restarts the run instead of editing.
@@ -284,5 +341,5 @@ void Display::drawSetRun(const Setpoints &sp, const ActuatorState &act, bool edi
     else if (act.halted())
         oled_.print("push to restart");
     else
-        oled_.print(editing ? "EDIT: turn knob" : "push to edit");
+        oled_.print(editing ? "EDIT: left" : "push to edit");
 }
