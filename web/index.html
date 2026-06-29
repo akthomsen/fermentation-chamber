@@ -33,8 +33,19 @@
     .dotrow { display:flex; align-items:center; gap:7px; font-size:.85rem; color:var(--muted); }
     .dot { width:11px; height:11px; border-radius:50%; background:var(--line); transition:background .15s; }
     .dot.on { background:var(--accent); box-shadow:0 0 8px var(--accent); }
-    #temp-card, #hum-card { padding:14px 12px 8px; margin-top:12px; }
-    #chart-temp, #chart-hum { max-width:100%; overflow-x:auto; }
+    #temp-card, #hum-card, #fan-plot-card, #heater-plot-card, #humid-plot-card {
+      padding:14px 12px 8px; margin-top:12px;
+    }
+    .plot-head { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:0 4px 8px; }
+    .plot-head h2 { margin:0; }
+    .plot-toggle {
+      background:transparent; color:var(--txt); border:1px solid var(--line);
+      border-radius:8px; padding:5px 10px; font-size:.82rem;
+    }
+    .plot-body.hidden { display:none; }
+    #chart-temp, #chart-hum, #chart-fan, #chart-heater, #chart-humid {
+      max-width:100%; overflow-x:auto;
+    }
     .legend { display:flex; flex-wrap:wrap; gap:16px; padding:8px 6px 2px; font-size:.82rem; color:var(--muted); }
     .legend span { display:inline-flex; align-items:center; gap:7px; }
     .legend i { width:20px; border-top:3px solid; display:inline-block; }
@@ -114,25 +125,76 @@
     </div>
   </div>
 
-  <!-- Live charts (driven by un-retained fermenter/telemetry) -->
-  <div class="card" id="temp-card">
-    <h2>Temperature — Inside vs Ambient</h2>
-    <div id="chart-temp"></div>
-    <div id="readout-temp" class="readout"><span class="empty">Hover plot for readings</span></div>
-    <div class="legend">
-      <span><i style="border-color:#d85a30"></i>Inside</span>
-      <span><i style="border-color:#e0b020"></i>Ambient</span>
-      <span><i class="dash" style="border-color:#d85a30"></i>Target</span>
-      <span><i class="dash" style="border-color:#b32424"></i>Ceiling</span>
+  <div id="plots">
+    <!-- Live charts (driven by un-retained fermenter/telemetry) -->
+    <div class="card" id="temp-card">
+      <div class="plot-head">
+        <h2>Temperature — Inside vs Ambient</h2>
+        <button class="plot-toggle" type="button" data-plot-toggle="temp-body" aria-expanded="true">Hide</button>
+      </div>
+      <div class="plot-body" id="temp-body">
+        <div id="chart-temp"></div>
+        <div id="readout-temp" class="readout"><span class="empty">Hover plot for readings</span></div>
+        <div class="legend">
+          <span><i style="border-color:#d85a30"></i>Inside</span>
+          <span><i style="border-color:#e0b020"></i>Ambient</span>
+          <span><i class="dash" style="border-color:#d85a30"></i>Target</span>
+          <span><i class="dash" style="border-color:#b32424"></i>Ceiling</span>
+        </div>
+      </div>
     </div>
-  </div>
-  <div class="card" id="hum-card">
-    <h2>Humidity</h2>
-    <div id="chart-hum"></div>
-    <div id="readout-hum" class="readout"><span class="empty">Hover plot for readings</span></div>
-    <div class="legend">
-      <span><i style="border-color:#4a90e2"></i>Humidity</span>
-      <span><i class="dash" style="border-color:#4a90e2"></i>Target</span>
+    <div class="card" id="hum-card">
+      <div class="plot-head">
+        <h2>Humidity</h2>
+        <button class="plot-toggle" type="button" data-plot-toggle="hum-body" aria-expanded="true">Hide</button>
+      </div>
+      <div class="plot-body" id="hum-body">
+        <div id="chart-hum"></div>
+        <div id="readout-hum" class="readout"><span class="empty">Hover plot for readings</span></div>
+        <div class="legend">
+          <span><i style="border-color:#4a90e2"></i>Humidity</span>
+          <span><i class="dash" style="border-color:#4a90e2"></i>Target</span>
+        </div>
+      </div>
+    </div>
+    <div class="card" id="fan-plot-card">
+      <div class="plot-head">
+        <h2>Fan</h2>
+        <button class="plot-toggle" type="button" data-plot-toggle="fan-body" aria-expanded="true">Hide</button>
+      </div>
+      <div class="plot-body" id="fan-body">
+        <div id="chart-fan"></div>
+        <div id="readout-fan" class="readout"><span class="empty">Hover plot for readings</span></div>
+        <div class="legend">
+          <span><i style="border-color:#8bc34a"></i>Fan duty</span>
+        </div>
+      </div>
+    </div>
+    <div class="card" id="heater-plot-card">
+      <div class="plot-head">
+        <h2>Heater</h2>
+        <button class="plot-toggle" type="button" data-plot-toggle="heater-body" aria-expanded="true">Hide</button>
+      </div>
+      <div class="plot-body" id="heater-body">
+        <div id="chart-heater"></div>
+        <div id="readout-heater" class="readout"><span class="empty">Hover plot for readings</span></div>
+        <div class="legend">
+          <span><i style="border-color:#d85a30"></i>Heater</span>
+        </div>
+      </div>
+    </div>
+    <div class="card" id="humid-plot-card">
+      <div class="plot-head">
+        <h2>Humidifier</h2>
+        <button class="plot-toggle" type="button" data-plot-toggle="humid-body" aria-expanded="true">Hide</button>
+      </div>
+      <div class="plot-body" id="humid-body">
+        <div id="chart-humid"></div>
+        <div id="readout-humid" class="readout"><span class="empty">Hover plot for readings</span></div>
+        <div class="legend">
+          <span><i style="border-color:#4a90e2"></i>Humidifier</span>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -265,10 +327,11 @@
         b.classList.toggle("active", b.getAttribute(attr) === value));
     }
 
-    // ---- uPlot: two charts, temperature (Inside + Ambient) and humidity --
+    // ---- uPlot: charts ---------------------------------------------------
     const WINDOW_SEC = 300;     // sliding view width: always show the last 5 min
     const MAX = 1800;           // hard cap on retained points (~30 min @ 1 msg/s)
     let xs = [], tIn = [], tAmb = [], hum = [];
+    let xsAct = [], fanDuty = [], heaterDuty = [], humidDuty = [];
 
     const GRID = { stroke: "#2a2f3a" };
     function chartWidth(cardId) { return Math.max(280, $(cardId).clientWidth - 26); }
@@ -279,7 +342,12 @@
       const last = xs.length ? xs[xs.length - 1] : Date.now() / 1000;
       return [last - WINDOW_SEC, last];
     }
+    function xRangeAct() {
+      const last = xsAct.length ? xsAct[xsAct.length - 1] : Date.now() / 1000;
+      return [last - WINDOW_SEC, last];
+    }
     const xScale = { time: true, range: () => xRange() };
+    const xScaleAct = { time: true, range: () => xRangeAct() };
     const xAxis = () => ({ stroke: "#8b929f", grid: GRID, ticks: GRID });
 
     // Latest setpoints from fermenter/state; the threshold lines read these.
@@ -347,6 +415,56 @@
       } } };
     }
 
+    function cursorReadoutAct(elId, rows) {
+      return { hooks: { setCursor: (u) => {
+        const idx = u.cursor.idx;
+        const el = $(elId);
+        if (idx == null || idx < 0 || idx >= xsAct.length) {
+          el.innerHTML = '<span class="empty">Hover plot for readings</span>';
+          return;
+        }
+        const values = rows.map((r) =>
+          `<span><strong style="color:${r.color}">${r.label}</strong> ${
+            r.format ? r.format(r.data[idx]) : fmtValue(r.data[idx], r.digits, r.unit)
+          }</span>`);
+        el.innerHTML = `<span class="time">${fmtTime(xsAct[idx])}</span>${values.join("")}`;
+      } } };
+    }
+
+    function onOff(v) {
+      return v >= 0.5 ? "ON" : "OFF";
+    }
+
+    function actuatorPlot(cardId, readoutId, label, color, data, unit, digits, maxValue, format) {
+      const yAxis = { scale: "y", stroke: "#8b929f", grid: GRID, ticks: GRID };
+      if (format) {
+        yAxis.splits = () => [0, 1];
+        yAxis.values = (u, vals) => vals.map(format);
+      } else {
+        yAxis.values = (u, vals) => vals.map((v) => `${Math.round(v)}`);
+      }
+
+      return new uPlot({
+        width: chartWidth(cardId), height: 150,
+        legend: { show: false },
+        scales: {
+          x: xScaleAct,
+          y: { range: () => [-0.05 * maxValue, maxValue * 1.05] },
+        },
+        series: [
+          {},
+          { label, stroke: color, scale: "y", width: 2, points: { show: false } },
+        ],
+        axes: [
+          xAxis(),
+          yAxis,
+        ],
+        plugins: [
+          cursorReadoutAct(readoutId, [{ label, color, data, digits, unit, format }]),
+        ],
+      }, [xsAct, data], $(`chart-${cardId.replace("-plot-card", "")}`));
+    }
+
     const uTemp = new uPlot({
       width: chartWidth("temp-card"), height: 260,
       legend: { show: false }, // using the custom legend strip below the chart
@@ -388,9 +506,28 @@
       ],
     }, [xs, hum], $("chart-hum"));
 
-    addEventListener("resize", () => {
+    const uFan = actuatorPlot("fan-plot-card", "readout-fan", "Fan", "#8bc34a", fanDuty, "%", 0, 100);
+    const uHeater = actuatorPlot("heater-plot-card", "readout-heater", "Heater", "#d85a30", heaterDuty, "", 0, 1, onOff);
+    const uHumid = actuatorPlot("humid-plot-card", "readout-humid", "Humidifier", "#4a90e2", humidDuty, "", 0, 1, onOff);
+
+    function resizeCharts() {
       uTemp.setSize({ width: chartWidth("temp-card"), height: 260 });
       uHum.setSize({ width: chartWidth("hum-card"), height: 200 });
+      uFan.setSize({ width: chartWidth("fan-plot-card"), height: 150 });
+      uHeater.setSize({ width: chartWidth("heater-plot-card"), height: 150 });
+      uHumid.setSize({ width: chartWidth("humid-plot-card"), height: 150 });
+    }
+
+    addEventListener("resize", resizeCharts);
+
+    document.querySelectorAll("[data-plot-toggle]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const body = $(button.dataset.plotToggle);
+        const collapsed = body.classList.toggle("hidden");
+        button.setAttribute("aria-expanded", String(!collapsed));
+        button.textContent = collapsed ? "Show" : "Hide";
+        if (!collapsed) requestAnimationFrame(resizeCharts);
+      });
     });
 
     // ---- telemetry: live points ------------------------------------------
@@ -404,8 +541,20 @@
       $("v-hum").textContent  = d.humidity.toFixed(1);
     }
 
+    function pushActuatorPoint(d) {
+      xsAct.push(Date.now() / 1000);
+      fanDuty.push(d.fanDuty ?? 0);
+      heaterDuty.push(d.heaterOn ? 1 : 0);
+      humidDuty.push(d.humidOn ? 1 : 0);
+      if (xsAct.length > MAX) { xsAct.shift(); fanDuty.shift(); heaterDuty.shift(); humidDuty.shift(); }
+      uFan.setData([xsAct, fanDuty]);
+      uHeater.setData([xsAct, heaterDuty]);
+      uHumid.setData([xsAct, humidDuty]);
+    }
+
     // ---- state: status cards + seed controls (without fighting the user) -
     function applyState(d) {
+      pushActuatorPoint(d);
       $("v-temp-set").textContent = d.targetTemp.toFixed(1);
       $("v-hum-set").textContent  = d.targetHumidity.toFixed(0);
       $("v-ceil").textContent     = d.targetCeiling.toFixed(1);

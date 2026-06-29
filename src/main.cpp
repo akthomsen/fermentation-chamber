@@ -30,18 +30,120 @@ static WiFiClient net;
 static PubSubClient mqtt(net);
 
 static unsigned long lastSensorRead = 0;
+static unsigned long lastUserActivity = 0;
+static unsigned long lastWiFiAttempt = 0;
+static unsigned long lastMqttAttempt = 0;
+static wl_status_t lastWiFiStatus = WL_IDLE_STATUS;
+static bool mqttWasConnected = false;
+static bool wifiBeginCalled = false;
 
-// Connect to WiFi, blocking until associated.
-static void connectWiFi()
+constexpr unsigned long WIFI_RETRY_MS = 10000;
+constexpr unsigned long MQTT_RETRY_MS = 30000;
+constexpr unsigned long MQTT_USER_IDLE_MS = 3000;
+
+enum NetworkAlert : uint8_t
 {
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
-    while (WiFi.status() != WL_CONNECTED)
+    NETWORK_ALERT_NONE,
+    NETWORK_ALERT_WIFI,
+    NETWORK_ALERT_MQTT,
+};
+
+static NetworkAlert lastNetworkAlert = NETWORK_ALERT_WIFI;
+
+static const char *networkAlertText(NetworkAlert alert)
+{
+    switch (alert)
     {
-        delay(300);
-        Serial.print(".");
+    case NETWORK_ALERT_WIFI:
+        return "WiFi!";
+    case NETWORK_ALERT_MQTT:
+        return "MQTT!";
+    default:
+        return "";
     }
-    Serial.printf("\nWiFi OK: %s\n", WiFi.localIP().toString().c_str());
+}
+
+static NetworkAlert currentNetworkAlert()
+{
+    if (WiFi.status() != WL_CONNECTED)
+        return NETWORK_ALERT_WIFI;
+    if (!mqtt.connected())
+        return NETWORK_ALERT_MQTT;
+    return NETWORK_ALERT_NONE;
+}
+
+static const char *mqttStateName(int state)
+{
+    switch (state)
+    {
+    case MQTT_CONNECTION_TIMEOUT:
+        return "connection timeout";
+    case MQTT_CONNECTION_LOST:
+        return "connection lost";
+    case MQTT_CONNECT_FAILED:
+        return "tcp connect failed";
+    case MQTT_DISCONNECTED:
+        return "disconnected";
+    case MQTT_CONNECTED:
+        return "connected";
+    case MQTT_CONNECT_BAD_PROTOCOL:
+        return "bad protocol";
+    case MQTT_CONNECT_BAD_CLIENT_ID:
+        return "bad client id";
+    case MQTT_CONNECT_UNAVAILABLE:
+        return "server unavailable";
+    case MQTT_CONNECT_BAD_CREDENTIALS:
+        return "bad credentials";
+    case MQTT_CONNECT_UNAUTHORIZED:
+        return "unauthorized";
+    default:
+        return "unknown";
+    }
+}
+
+static void noteNetworkAlertChange()
+{
+    const NetworkAlert alert = currentNetworkAlert();
+    if (alert != lastNetworkAlert)
+    {
+        lastNetworkAlert = alert;
+        menu.requestRedraw();
+    }
+}
+
+// Start or retry WiFi without blocking chamber control.
+static void serviceWiFi()
+{
+    const unsigned long now = millis();
+    const wl_status_t status = WiFi.status();
+
+    if (status != lastWiFiStatus)
+    {
+        lastWiFiStatus = status;
+        if (status == WL_CONNECTED)
+        {
+            Serial.printf("WiFi OK: %s RSSI %d dBm\n",
+                          WiFi.localIP().toString().c_str(), WiFi.RSSI());
+        }
+        else
+        {
+            Serial.printf("WiFi status=%d\n", status);
+        }
+        noteNetworkAlertChange();
+    }
+
+    if (status == WL_CONNECTED)
+        return;
+
+    if (!wifiBeginCalled || now - lastWiFiAttempt >= WIFI_RETRY_MS)
+    {
+        wifiBeginCalled = true;
+        lastWiFiAttempt = now;
+        WiFi.mode(WIFI_STA);
+        WiFi.begin(WIFI_SSID, WIFI_PASS);
+        Serial.println("WiFi connect attempt");
+        noteNetworkAlertChange();
+    }
 }
 
 // Topics. Telemetry (MQTT_TOPIC, from Secrets.h) is the live, un-retained
@@ -128,6 +230,9 @@ static bool readInt(JsonObjectConst obj, const char *key, int &out)
 // last thing the UI sent.
 static void publishState()
 {
+    if (!mqtt.connected())
+        return;
+
     const Setpoints sp = menu.setpoints();
     const ActuatorState &a = controller.state();
     const char *heaterOverride = a.heaterOverride > 0 ? "on" : (a.heaterOverride < 0 ? "off" : "auto");
@@ -165,24 +270,61 @@ static void publishState()
         Serial.println("State publish failed");
 }
 
-// (Re)establish the MQTT connection, blocking until connected.
-static void mqttReconnect()
+// Try to establish MQTT once per retry interval. MQTT must never block the
+// chamber loop; local controls and safety continue while the broker is down.
+static void serviceMqtt(bool allowConnect)
 {
-    while (!mqtt.connected())
+    if (WiFi.status() != WL_CONNECTED)
     {
-        if (mqtt.connect("fermenter-c6"))
+        if (mqttWasConnected)
         {
-            Serial.println("MQTT OK");
-            mqtt.subscribe(TOPIC_CMD_SETPOINT);
-            mqtt.subscribe(TOPIC_CMD_CONTROL);
-            publishState(); // seed retained state for any subscriber
+            mqttWasConnected = false;
+            Serial.println("MQTT offline: WiFi down");
+            noteNetworkAlertChange();
         }
-        else
-        {
-            Serial.printf("MQTT fail rc=%d\n", mqtt.state());
-            delay(1000);
-        }
+        return;
     }
+
+    if (mqtt.connected())
+    {
+        mqtt.loop();
+        if (!mqttWasConnected)
+        {
+            mqttWasConnected = true;
+            noteNetworkAlertChange();
+        }
+        return;
+    }
+
+    if (mqttWasConnected)
+    {
+        mqttWasConnected = false;
+        Serial.printf("MQTT disconnected rc=%d (%s)\n", mqtt.state(), mqttStateName(mqtt.state()));
+        noteNetworkAlertChange();
+    }
+
+    if (!allowConnect)
+        return;
+
+    const unsigned long now = millis();
+    if (lastMqttAttempt != 0 && now - lastMqttAttempt < MQTT_RETRY_MS)
+        return;
+    lastMqttAttempt = now;
+
+    Serial.printf("MQTT connect attempt %s:%d\n", MQTT_BROKER_IP, MQTT_PORT);
+    if (mqtt.connect("fermenter-c6"))
+    {
+        mqttWasConnected = true;
+        Serial.println("MQTT OK");
+        mqtt.subscribe(TOPIC_CMD_SETPOINT);
+        mqtt.subscribe(TOPIC_CMD_CONTROL);
+        publishState(); // seed retained state for any subscriber
+    }
+    else
+    {
+        Serial.printf("MQTT fail rc=%d (%s)\n", mqtt.state(), mqttStateName(mqtt.state()));
+    }
+    noteNetworkAlertChange();
 }
 
 // Handle inbound commands. Runs in loop() context (via mqtt.loop()), not an
@@ -360,12 +502,6 @@ void setup()
     Serial.begin(115200);
     Wire.begin(PIN_SDA, PIN_SCL);
 
-    connectWiFi();
-    mqtt.setServer(MQTT_BROKER_IP, MQTT_PORT);
-    if (!mqtt.setBufferSize(MQTT_BUFFER_SIZE))
-        Serial.println("MQTT buffer resize failed");
-    mqtt.setCallback(onMqtt);
-
     menu.begin();
     controller.begin();
 
@@ -376,20 +512,24 @@ void setup()
     controller.update(menu.setpoints(), sensors.readings());
     menu.requestRedraw();
 
+    mqtt.setServer(MQTT_BROKER_IP, MQTT_PORT);
+    mqtt.setSocketTimeout(2);
+    if (!mqtt.setBufferSize(MQTT_BUFFER_SIZE))
+        Serial.println("MQTT buffer resize failed");
+    mqtt.setCallback(onMqtt);
+    serviceWiFi();
+
     Serial.println("Ready.");
 }
 
 void loop()
 {
-    // Keep the MQTT link alive and service its buffers each iteration.
-    if (!mqtt.connected())
-        mqttReconnect();
-    mqtt.loop();
+    const unsigned long loopStart = millis();
 
     // Update sensors and outputs once per interval.
-    if (millis() - lastSensorRead >= SENSOR_INTERVAL_MS)
+    if (loopStart - lastSensorRead >= SENSOR_INTERVAL_MS)
     {
-        lastSensorRead = millis();
+        lastSensorRead = loopStart;
 
         sensors.read();
 
@@ -409,7 +549,8 @@ void loop()
         snprintf(buf, sizeof(buf),
                  "{\"ts\":%lu,\"dsTemp\":%.2f,\"bmeTemp\":%.2f,\"humidity\":%.1f,\"pressure\":%.1f}",
                  millis(), s.dsTemp, s.bmeTemp, s.humidity, s.pressure);
-        mqtt.publish(MQTT_TOPIC, buf);
+        if (mqtt.connected() && !mqtt.publish(MQTT_TOPIC, buf))
+            Serial.println("Telemetry publish failed");
 
         // Echo current setpoints + actuator state (retained) so the UI tracks
         // ground truth, including changes made on the physical encoder.
@@ -418,6 +559,8 @@ void loop()
 
     // Read the button (short press = tap, 5 s hold = stop).
     menu.poll();
+    if (menu.consumeActivity())
+        lastUserActivity = millis();
 
     // Hold-to-stop: shut everything off until the user restarts.
     if (menu.consumeStop())
@@ -440,6 +583,11 @@ void loop()
     {
         display.render(menu.screen(), menu.isEditing(),
                        menu.setpoints(), sensors.readings(), controller.state(),
-                       menu.screenLabel(), controller.runStartMs());
+                       menu.screenLabel(), controller.runStartMs(),
+                       networkAlertText(currentNetworkAlert()));
     }
+
+    serviceWiFi();
+    const bool uiIdle = !menu.isEditing() && millis() - lastUserActivity >= MQTT_USER_IDLE_MS;
+    serviceMqtt(uiIdle);
 }

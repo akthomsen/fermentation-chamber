@@ -197,11 +197,13 @@ void Controller::update(const Setpoints &sp, const SensorReadings &s)
     state_.controlTemp = tempValid ? controlTemp : NAN;
     const bool dsValid = validTemp(s.dsTemp);
 
-    // Normal hysteresis, but shut off slightly BELOW target so residual heat
-    // carries the temperature the rest of the way up.
-    if (tempValid && controlTemp <= sp.targetTemp - HEATER_OFFSET - HYSTERESIS)
+    // Hysteresis band: turn ON once we fall HYSTERESIS below target, and don't
+    // turn OFF again until we reach target. The two thresholds must differ or the
+    // dead-band collapses to zero width and the heater short-cycles (chatters).
+    // Shutting off at target lets residual heat carry the rest of the way up.
+    if (tempValid && controlTemp <= sp.targetTemp - HYSTERESIS)
         state_.heaterOn = true;
-    else if (controlTemp >= sp.targetTemp - HEATER_OFFSET)
+    else if (controlTemp >= sp.targetTemp)
         state_.heaterOn = false;
 
     if (heaterOverride_ < 0)

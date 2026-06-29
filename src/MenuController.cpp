@@ -78,6 +78,14 @@ bool MenuController::consumeStop()
     return true;
 }
 
+bool MenuController::consumeActivity()
+{
+    if (!activityPending_)
+        return false;
+    activityPending_ = false;
+    return true;
+}
+
 bool MenuController::isEditableScreen(int screen) const
 {
     return screen == SCREEN_SET_TEMP || screen == SCREEN_SET_HUMID ||
@@ -105,6 +113,7 @@ void IRAM_ATTR MenuController::onEncoder()
     if (dir == 0)
         return;
     encAccum_ = 0;
+    activityPending_ = true;
 
     if (!editing_)
     {
@@ -182,6 +191,7 @@ void MenuController::poll()
         btnDown_ = true;
         longFired_ = false;
         btnDownSince_ = now;
+        activityPending_ = true;
     }
     else if (pressed && btnDown_)
     {
@@ -192,6 +202,7 @@ void MenuController::poll()
             stopRequested_ = true;
             editing_ = false;
             menuChanged_ = true;
+            activityPending_ = true;
         }
     }
     else if (!pressed && btnDown_)
@@ -199,6 +210,7 @@ void MenuController::poll()
         // Released: a short, clean press counts as a tap (long hold already acted).
         btnDown_ = false;
         const unsigned long held = now - btnDownSince_;
+        activityPending_ = true;
         if (!longFired_ && held >= BUTTON_DEBOUNCE_MS)
             onShortPress();
     }

@@ -22,7 +22,8 @@ public:
                 const SensorReadings &sensors,
                 const ActuatorState &act,
                 const char *title,
-                unsigned long runStartMs);
+                unsigned long runStartMs,
+                const char *networkAlert);
 
 private:
     void drawOverview(const Setpoints &sp, const SensorReadings &s, const ActuatorState &act,

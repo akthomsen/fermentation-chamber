@@ -78,6 +78,9 @@ public:
     // Returns true (and clears it) when the user held the button to stop.
     bool consumeStop();
 
+    // Returns true (and clears it) when the physical controls were used.
+    bool consumeActivity();
+
 private:
     void onEncoder(); // called from the encoder ISR
     void onShortPress();
@@ -90,6 +93,7 @@ private:
     volatile int menuIndex_ = SCREEN_OVERVIEW;
     volatile bool menuChanged_ = true; // redraw display
     volatile bool editing_ = false;    // editing a setpoint with the knob?
+    volatile bool activityPending_ = false; // encoder/button activity since last loop
     bool halted_ = false;              // mirror of Controller::state().halted()
     bool restartRequested_ = false;    // short-pressed restart on the run screen
     bool stopRequested_ = false;       // held the button to stop

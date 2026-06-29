@@ -1,5 +1,6 @@
 #include "Display.h"
 
+#include <string.h>
 #include <Wire.h>
 #include "Config.h"
 #include "MenuController.h" // for MenuScreen
@@ -61,7 +62,8 @@ void Display::render(int screen, bool editing,
                      const SensorReadings &sensors,
                      const ActuatorState &act,
                      const char *title,
-                     unsigned long runStartMs)
+                     unsigned long runStartMs,
+                     const char *networkAlert)
 {
     oled_.clearDisplay();
 
@@ -70,6 +72,12 @@ void Display::render(int screen, bool editing,
     oled_.setTextColor(SSD1306_WHITE);
     oled_.setCursor(0, 0);
     oled_.printf("[ %s ]", title);
+    if (networkAlert && networkAlert[0])
+    {
+        const int16_t x = SCREEN_WIDTH - (int16_t)strlen(networkAlert) * 6;
+        oled_.setCursor(x < 0 ? 0 : x, 0);
+        oled_.print(networkAlert);
+    }
     oled_.drawFastHLine(0, 12, SCREEN_WIDTH, SSD1306_WHITE);
 
     switch (screen)
