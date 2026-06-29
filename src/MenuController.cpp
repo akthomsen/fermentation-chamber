@@ -15,7 +15,11 @@ MenuController::MenuController()
       dsMaxOverTarget_(DEFAULT_DS_MAX_OVER_TARGET),
       controlSensor_(CONTROL_SENSOR_DS),
       fanManualPct_(FAN_MANUAL_AUTO), // AUTO (conditioning-driven circulation)
-      runMinutes_(DEFAULT_RUN_MINUTES)
+      runMinutes_(DEFAULT_RUN_MINUTES),
+      hysteresis_(HYSTERESIS),
+      fanAfterHeatSec_((long)(FAN_AFTER_HEAT_MS / 1000UL)),
+      maxHeatMin_((long)(MAX_HEAT_MS / 60000UL)),
+      heatCooldownMin_((long)(HEAT_COOLDOWN_MS / 60000UL))
 {
     instance_ = this;
 }
@@ -44,8 +48,14 @@ const ItemKind *MenuController::groupItems(uint8_t &count) const
     }
     case TOP_SETTINGS:
     {
-        static const ItemKind a[] = {IK_EDIT_TEMP, IK_EDIT_HUMID, IK_EDIT_MAXTEMP,
-                                     IK_EDIT_DSMAX, IK_EDIT_CONTROL, IK_BACK};
+        static const ItemKind a[] = {IK_EDIT_TEMP, IK_EDIT_HUMID, IK_EDIT_CONTROL, IK_BACK};
+        count = sizeof(a) / sizeof(a[0]);
+        return a;
+    }
+    case TOP_ADVANCED:
+    {
+        static const ItemKind a[] = {IK_EDIT_MAXTEMP, IK_EDIT_DSMAX, IK_EDIT_HYST,
+                                     IK_EDIT_FANHEAT, IK_EDIT_MAXON, IK_EDIT_COOLDOWN, IK_BACK};
         count = sizeof(a) / sizeof(a[0]);
         return a;
     }
@@ -92,9 +102,13 @@ const char *MenuController::title() const
             case IK_VIEW_ACT: return "Actuators";
             case IK_EDIT_TEMP: return "Set Temp";
             case IK_EDIT_HUMID: return "Set Humid";
+            case IK_EDIT_CONTROL: return "Control";
             case IK_EDIT_MAXTEMP: return "Max Temp";
             case IK_EDIT_DSMAX: return "DS Max";
-            case IK_EDIT_CONTROL: return "Control";
+            case IK_EDIT_HYST: return "Hysteresis";
+            case IK_EDIT_FANHEAT: return "Fan-after-heat";
+            case IK_EDIT_MAXON: return "Heat Max-On";
+            case IK_EDIT_COOLDOWN: return "Cooldown";
             case IK_CTRL_HEATER: return "Heater";
             case IK_CTRL_HUMID: return "Humidifier";
             case IK_CTRL_FAN: return "Fan";
@@ -105,6 +119,7 @@ const char *MenuController::title() const
         {
         case TOP_STATES: return "States";
         case TOP_SETTINGS: return "Settings";
+        case TOP_ADVANCED: return "Advanced";
         case TOP_ACTUATORS: return "Actuators";
         default: return "";
         }
@@ -115,6 +130,7 @@ const char *MenuController::title() const
     case TOP_OVERVIEW: return "Overview";
     case TOP_STATES: return "States";
     case TOP_SETTINGS: return "Settings";
+    case TOP_ADVANCED: return "Advanced";
     case TOP_ACTUATORS: return "Actuators";
     case TOP_RUNTIME: return "Run Time";
     case TOP_NETWORK: return "Network";
@@ -132,6 +148,10 @@ Setpoints MenuController::setpoints() const
     sp.controlSensor = controlSensor_;
     sp.fanManualPct = fanManualPct_;
     sp.runMinutes = runMinutes_;
+    sp.hysteresis = hysteresis_;
+    sp.fanAfterHeatSec = fanAfterHeatSec_;
+    sp.maxHeatMin = maxHeatMin_;
+    sp.heatCooldownMin = heatCooldownMin_;
     return sp;
 }
 
@@ -267,6 +287,26 @@ void MenuController::applyEdit(int dir, int mult)
     case IK_EDIT_CONTROL:
         controlSensor_ = (ControlSensor)((controlSensor_ + dir + CONTROL_SENSOR_COUNT) % CONTROL_SENSOR_COUNT);
         break;
+    case IK_EDIT_HYST:
+        hysteresis_ = hysteresis_ + dir * 0.1f * mult;
+        if (hysteresis_ < 0.05f)
+            hysteresis_ = 0.05f;
+        break;
+    case IK_EDIT_FANHEAT:
+        fanAfterHeatSec_ = fanAfterHeatSec_ + dir * 15 * mult; // 15 s steps
+        if (fanAfterHeatSec_ < 0)
+            fanAfterHeatSec_ = 0;
+        break;
+    case IK_EDIT_MAXON:
+        maxHeatMin_ = maxHeatMin_ + dir * 5 * mult; // 5 min steps
+        if (maxHeatMin_ < 1)
+            maxHeatMin_ = 1; // never disable the max-on backstop entirely
+        break;
+    case IK_EDIT_COOLDOWN:
+        heatCooldownMin_ = heatCooldownMin_ + dir * 1 * mult; // 1 min steps
+        if (heatCooldownMin_ < 0)
+            heatCooldownMin_ = 0;
+        break;
     case IK_CTRL_HEATER:
         heaterOverride_ = clampOverride((int8_t)(heaterOverride_ + dir));
         break;
@@ -357,6 +397,7 @@ void MenuController::onShortPress()
     {
     case TOP_STATES:
     case TOP_SETTINGS:
+    case TOP_ADVANCED:
     case TOP_ACTUATORS:
         entered_ = true;
         itemSel_ = 0;

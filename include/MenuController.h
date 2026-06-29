@@ -29,6 +29,7 @@ enum TopPage : uint8_t
     TOP_OVERVIEW = 0,
     TOP_STATES,
     TOP_SETTINGS,
+    TOP_ADVANCED,
     TOP_ACTUATORS,
     TOP_RUNTIME,
     TOP_NETWORK,
@@ -43,9 +44,13 @@ enum ItemKind : uint8_t
     IK_VIEW_ACT,
     IK_EDIT_TEMP,
     IK_EDIT_HUMID,
+    IK_EDIT_CONTROL,
     IK_EDIT_MAXTEMP,
     IK_EDIT_DSMAX,
-    IK_EDIT_CONTROL,
+    IK_EDIT_HYST,
+    IK_EDIT_FANHEAT,
+    IK_EDIT_MAXON,
+    IK_EDIT_COOLDOWN,
     IK_CTRL_HEATER,
     IK_CTRL_HUMID,
     IK_CTRL_FAN,
@@ -92,6 +97,12 @@ public:
     void setRunMinutes(long m) { runMinutes_ = m; }
     void setHeaterOverride(int8_t v) { heaterOverride_ = clampOverride(v); }
     void setHumidOverride(int8_t v) { humidOverride_ = clampOverride(v); }
+
+    // Advanced control tuning (also clamped to safe ranges in the Controller).
+    void setHysteresis(float v) { hysteresis_ = v < 0.05f ? 0.05f : (v > 10.0f ? 10.0f : v); }
+    void setFanAfterHeatSec(long v) { fanAfterHeatSec_ = v < 0 ? 0 : (v > 3600 ? 3600 : v); }
+    void setMaxHeatMin(long v) { maxHeatMin_ = v < 1 ? 1 : (v > 600 ? 600 : v); }
+    void setHeatCooldownMin(long v) { heatCooldownMin_ = v < 0 ? 0 : (v > 600 ? 600 : v); }
 
     // ---- Redraw / events ----
     bool consumeRedraw();
@@ -143,6 +154,12 @@ private:
     volatile long runMinutes_;
     volatile int8_t heaterOverride_ = 0; // -1 off, 0 auto, 1 on
     volatile int8_t humidOverride_ = 0;  // -1 off, 0 auto, 1 on
+
+    // --- Advanced tuning (Config.h defaults set in the constructor) ---
+    volatile float hysteresis_;
+    volatile long fanAfterHeatSec_;
+    volatile long maxHeatMin_;
+    volatile long heatCooldownMin_;
 
     // --- Encoder decode state ---
     volatile unsigned long lastEncoderTime_ = 0;

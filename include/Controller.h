@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include "Sensors.h"
+#include "Config.h" // tuning defaults for the advanced setpoints below
 
 enum ControlSensor : uint8_t
 {
@@ -22,6 +23,13 @@ struct Setpoints
     long runMinutes = 0;         // shut everything off after this many minutes (0 = no limit)
     int fanManualPct = -1;       // FAN_MANUAL_AUTO (-1) = AUTO (conditioning-driven); 0..100 = manual duty %
     ControlSensor controlSensor = CONTROL_SENSOR_DS;
+
+    // Advanced control tuning (defaults from Config.h). Human units; Controller
+    // converts to the millisecond timers it runs on.
+    float hysteresis = HYSTERESIS;                            // control dead-band, degrees C
+    long fanAfterHeatSec = (long)(FAN_AFTER_HEAT_MS / 1000UL); // fan full-speed hold after heater off, s
+    long maxHeatMin = (long)(MAX_HEAT_MS / 60000UL);          // max continuous heater-on time, min
+    long heatCooldownMin = (long)(HEAT_COOLDOWN_MS / 60000UL); // forced cooldown after a max-on trip, min
 };
 
 // Resolved on/off state of every actuator, plus the reasons behind it. Read by
@@ -109,4 +117,12 @@ private:
     unsigned long heaterOnSince_ = 0;
     unsigned long lockoutSince_ = 0;
     unsigned long fanFullUntilMs_ = 0;
+
+    // Advanced tuning, refreshed from Setpoints at the top of every update() and
+    // also read by the override setters (which run outside update()). Defaults
+    // from Config.h until the first update() applies the live setpoints.
+    float hysteresis_ = HYSTERESIS;
+    unsigned long fanAfterHeatMs_ = FAN_AFTER_HEAT_MS;
+    unsigned long maxHeatMs_ = MAX_HEAT_MS;
+    unsigned long heatCooldownMs_ = HEAT_COOLDOWN_MS;
 };

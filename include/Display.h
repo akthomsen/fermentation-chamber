@@ -49,6 +49,10 @@ private:
     void drawSetCeiling(const Setpoints &sp);
     void drawSetDsMax(const Setpoints &sp);
     void drawSetControlSensor(const Setpoints &sp);
+    void drawSetHysteresis(const Setpoints &sp);
+    void drawSetFanAfterHeat(const Setpoints &sp);
+    void drawSetMaxOn(const Setpoints &sp);
+    void drawSetCooldown(const Setpoints &sp);
     void drawSetFan(const Setpoints &sp);
     void drawOverrideCtrl(int8_t override);
     void drawSetRun(const Setpoints &sp, const ActuatorState &act, bool editing,

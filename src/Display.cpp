@@ -65,6 +65,18 @@ void formatGroupItem(ItemKind k, const Setpoints &sp, const ActuatorState &act, 
     case IK_EDIT_CONTROL:
         snprintf(out, n, "Control %s", controlSensorLabel(sp.controlSensor));
         break;
+    case IK_EDIT_HYST:
+        snprintf(out, n, "Hyst    %.1fC", sp.hysteresis);
+        break;
+    case IK_EDIT_FANHEAT:
+        snprintf(out, n, "FanHeat %lds", sp.fanAfterHeatSec);
+        break;
+    case IK_EDIT_MAXON:
+        snprintf(out, n, "MaxOn   %ldm", sp.maxHeatMin);
+        break;
+    case IK_EDIT_COOLDOWN:
+        snprintf(out, n, "Cooldn  %ldm", sp.heatCooldownMin);
+        break;
     case IK_CTRL_HEATER:
         snprintf(out, n, "Heater  %s", overrideLabel(act.heaterOverride));
         break;
@@ -191,6 +203,18 @@ void Display::render(const MenuController &menu,
                 break;
             case IK_EDIT_CONTROL:
                 drawSetControlSensor(sp);
+                break;
+            case IK_EDIT_HYST:
+                drawSetHysteresis(sp);
+                break;
+            case IK_EDIT_FANHEAT:
+                drawSetFanAfterHeat(sp);
+                break;
+            case IK_EDIT_MAXON:
+                drawSetMaxOn(sp);
+                break;
+            case IK_EDIT_COOLDOWN:
+                drawSetCooldown(sp);
                 break;
             case IK_CTRL_HEATER:
                 drawOverrideCtrl(act.heaterOverride);
@@ -332,12 +356,25 @@ void Display::drawCover(const char *name)
 
 void Display::drawGroupList(const MenuController &menu, const Setpoints &sp, const ActuatorState &act)
 {
+    constexpr uint8_t MAX_VISIBLE = 6; // rows that fit below the title bar
     oled_.setTextSize(1);
     const uint8_t n = menu.groupItemCount();
     const uint8_t sel = menu.itemIndex();
-    for (uint8_t i = 0; i < n; i++)
+
+    // Scroll window: keep the highlighted item on screen for longer lists.
+    uint8_t first = 0;
+    if (n > MAX_VISIBLE)
     {
-        const int y = 15 + i * 8;
+        if (sel >= MAX_VISIBLE)
+            first = sel - MAX_VISIBLE + 1;
+        if (first > n - MAX_VISIBLE)
+            first = n - MAX_VISIBLE;
+    }
+
+    for (uint8_t row = 0; row < MAX_VISIBLE && (first + row) < n; row++)
+    {
+        const uint8_t i = first + row;
+        const int y = 15 + row * 8;
         oled_.setCursor(0, y);
         oled_.print(i == sel ? ">" : " ");
         oled_.setCursor(8, y);
@@ -387,6 +424,50 @@ void Display::drawSetControlSensor(const Setpoints &sp)
     oled_.setTextSize(2);
     oled_.setCursor(0, 24);
     oled_.print(controlSensorLabel(sp.controlSensor));
+    drawValuePrompt(oled_, 56);
+}
+
+void Display::drawSetHysteresis(const Setpoints &sp)
+{
+    oled_.setTextSize(2);
+    oled_.setCursor(0, 22);
+    oled_.printf("%.1f C", sp.hysteresis);
+    oled_.setTextSize(1);
+    oled_.setCursor(0, 44);
+    oled_.print("control dead-band");
+    drawValuePrompt(oled_, 56);
+}
+
+void Display::drawSetFanAfterHeat(const Setpoints &sp)
+{
+    oled_.setTextSize(2);
+    oled_.setCursor(0, 22);
+    oled_.printf("%ld s", sp.fanAfterHeatSec);
+    oled_.setTextSize(1);
+    oled_.setCursor(0, 44);
+    oled_.print("fan hold after heat");
+    drawValuePrompt(oled_, 56);
+}
+
+void Display::drawSetMaxOn(const Setpoints &sp)
+{
+    oled_.setTextSize(2);
+    oled_.setCursor(0, 22);
+    oled_.printf("%ld min", sp.maxHeatMin);
+    oled_.setTextSize(1);
+    oled_.setCursor(0, 44);
+    oled_.print("max heater-on time");
+    drawValuePrompt(oled_, 56);
+}
+
+void Display::drawSetCooldown(const Setpoints &sp)
+{
+    oled_.setTextSize(2);
+    oled_.setCursor(0, 22);
+    oled_.printf("%ld min", sp.heatCooldownMin);
+    oled_.setTextSize(1);
+    oled_.setCursor(0, 44);
+    oled_.print("cooldown after trip");
     drawValuePrompt(oled_, 56);
 }
 

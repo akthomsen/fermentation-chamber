@@ -131,7 +131,7 @@ void Controller::setHeaterOverride(bool on)
     {
         state_.heaterOn = false;
         heaterWasOn_ = false;
-        fanFullUntilMs_ = millis() + FAN_AFTER_HEAT_MS;
+        fanFullUntilMs_ = millis() + fanAfterHeatMs_;
         digitalWrite(PIN_HEATER, HEATER_OFF);
     }
 }
@@ -168,6 +168,13 @@ void Controller::update(const Setpoints &sp, const SensorReadings &s)
     const unsigned long now = millis();
     const unsigned long elapsedMs = now - runStartMs_;
 
+    // Refresh the live tuning (clamped to safe ranges) so a bad remote/menu value
+    // can't disable a safety backstop. The override setters read these too.
+    hysteresis_ = sp.hysteresis > 0.05f ? sp.hysteresis : 0.05f;
+    fanAfterHeatMs_ = (unsigned long)(sp.fanAfterHeatSec < 0 ? 0 : sp.fanAfterHeatSec) * 1000UL;
+    maxHeatMs_ = (unsigned long)(sp.maxHeatMin < 1 ? 1 : sp.maxHeatMin) * 60000UL;
+    heatCooldownMs_ = (unsigned long)(sp.heatCooldownMin < 0 ? 0 : sp.heatCooldownMin) * 60000UL;
+
     state_.humidOverride = humidOverride_;
     state_.heaterOverride = heaterOverride_;
 
@@ -187,7 +194,7 @@ void Controller::update(const Setpoints &sp, const SensorReadings &s)
     }
 
     // Expire the cooldown lockout once enough time has passed.
-    if (state_.heaterLockout && now - lockoutSince_ > HEAT_COOLDOWN_MS)
+    if (state_.heaterLockout && now - lockoutSince_ > heatCooldownMs_)
         state_.heaterLockout = false;
 
     state_.controlSensor = sp.controlSensor < CONTROL_SENSOR_COUNT ? sp.controlSensor : CONTROL_SENSOR_DS;
@@ -201,7 +208,7 @@ void Controller::update(const Setpoints &sp, const SensorReadings &s)
     // turn OFF again until we reach target. The two thresholds must differ or the
     // dead-band collapses to zero width and the heater short-cycles (chatters).
     // Shutting off at target lets residual heat carry the rest of the way up.
-    if (tempValid && controlTemp <= sp.targetTemp - HYSTERESIS)
+    if (tempValid && controlTemp <= sp.targetTemp - hysteresis_)
         state_.heaterOn = true;
     else if (controlTemp >= sp.targetTemp)
         state_.heaterOn = false;
@@ -225,7 +232,7 @@ void Controller::update(const Setpoints &sp, const SensorReadings &s)
     {
         if (!heaterWasOn_)
             heaterOnSince_ = now; // just turned on
-        else if (now - heaterOnSince_ > MAX_HEAT_MS)
+        else if (now - heaterOnSince_ > maxHeatMs_)
         {
             state_.heaterOn = false;
             state_.heaterLockout = true;
@@ -233,7 +240,7 @@ void Controller::update(const Setpoints &sp, const SensorReadings &s)
         }
     }
     if (heaterWasOn_ && !state_.heaterOn)
-        fanFullUntilMs_ = now + FAN_AFTER_HEAT_MS;
+        fanFullUntilMs_ = now + fanAfterHeatMs_;
     heaterWasOn_ = state_.heaterOn;
 
     digitalWrite(PIN_HEATER, state_.heaterOn ? HEATER_ON : HEATER_OFF);
@@ -250,9 +257,9 @@ void Controller::update(const Setpoints &sp, const SensorReadings &s)
         state_.humidOn = true;
     else if (!humidityValid)
         state_.humidOn = false;
-    else if (s.humidity < sp.targetHumidity - HYSTERESIS)
+    else if (s.humidity < sp.targetHumidity - hysteresis_)
         state_.humidOn = true;
-    else if (s.humidity > sp.targetHumidity + HYSTERESIS)
+    else if (s.humidity > sp.targetHumidity + hysteresis_)
         state_.humidOn = false;
     digitalWrite(PIN_HUMIDIFIER, state_.humidOn ? HUMIDIFIER_ON : HUMIDIFIER_OFF);
 
