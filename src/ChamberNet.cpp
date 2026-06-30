@@ -216,7 +216,7 @@ void ChamberNet::connect()
     renderProgress();
 
     Serial.printf("MQTT connect attempt %s:%d\n", MQTT_BROKER_IP, MQTT_PORT);
-    if (mqtt_.connect("fermenter-c6"))
+    if (mqtt_.connect("fermenter-c6", MQTT_USER, MQTT_PASS))
     {
         Serial.println("MQTT OK");
         mqtt_.subscribe(TOPIC_CMD_SETPOINT);
