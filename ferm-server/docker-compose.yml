@@ -1,0 +1,58 @@
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    # Only 1883 is published, for the ESP32 on the LAN. The browser no longer
+    # speaks MQTT (it reads via the FastAPI WebSocket relay), so the WebSocket
+    # listener is gone.
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/config:/mosquitto/config
+      - ./mosquitto/data:/mosquitto/data
+
+  influxdb:
+    image: influxdb:2.7
+    restart: unless-stopped
+    # Not published. Telegraf and the app reach it at http://influxdb:8086 on
+    # the internal network. For the Influx UI, tunnel: `docker compose port`
+    # or an SSH/tailscale tunnel to influxdb:8086.
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=${INFLUX_PASSWORD}
+      - DOCKER_INFLUXDB_INIT_ORG=ferm
+      - DOCKER_INFLUXDB_INIT_BUCKET=fermenter
+      - DOCKER_INFLUXDB_INIT_RETENTION=90d
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${INFLUX_TOKEN}
+    volumes:
+      - ./influxdb/data:/var/lib/influxdb2
+      - ./influxdb/config:/etc/influxdb2
+
+  telegraf:
+    image: telegraf:1.34
+    restart: unless-stopped
+    depends_on: [mosquitto, influxdb]
+    environment:
+      - INFLUX_TOKEN=${INFLUX_TOKEN}
+      - MQTT_PASS=${MQTT_TELEGRAF_PASS}
+    volumes:
+      - ./telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+
+  app:
+    build: ./app
+    restart: unless-stopped
+    depends_on: [influxdb, mosquitto]
+    ports:
+      - "8000:8000"
+    environment:
+      - INFLUX_URL=http://influxdb:8086
+      - INFLUX_TOKEN=${INFLUX_TOKEN}
+      - INFLUX_ORG=ferm
+      - INFLUX_BUCKET=fermenter
+      - MQTT_HOST=mosquitto
+      - MQTT_PORT=1883
+      - MQTT_USER=webui
+      - MQTT_PASS=${MQTT_WEBUI_PASS}
+    volumes:
+      - ./app/web:/app/web

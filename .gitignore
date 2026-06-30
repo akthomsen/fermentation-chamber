@@ -5,5 +5,15 @@
 .vscode/ipch
 .vscode/
 __pycache__/
-# WiFi / MQTT credentials - never commit (repo is public)
+
 include/Secrets.h
+.env
+
+# Broker secrets and runtime state (match at any depth, from any cwd)
+**/mosquitto/config/passwords
+**/mosquitto/config/acl
+**/mosquitto/data/
+
+# InfluxDB data and config (the config embeds the admin token)
+**/influxdb/data/
+**/influxdb/config/

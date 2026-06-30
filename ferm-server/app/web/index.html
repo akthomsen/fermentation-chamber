@@ -1,116 +1,444 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Fermentation chamber</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css">
   <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/mqtt@5/dist/mqtt.min.js"></script>
   <style>
     :root {
-      --bg:#0f1115; --card:#1a1d24; --line:#2a2f3a; --txt:#e6e8ec;
-      --muted:#8b929f; --accent:#d85a30; --blue:#4a90e2; --ok:#1d9e75; --bad:#b32424;
-      --changed:#25b46f;
+      --bg: #0f1115;
+      --card: #1a1d24;
+      --line: #2a2f3a;
+      --txt: #e6e8ec;
+      --muted: #8b929f;
+      --accent: #d85a30;
+      --blue: #4a90e2;
+      --ok: #1d9e75;
+      --bad: #b32424;
+      --changed: #25b46f;
     }
-    * { box-sizing: border-box; }
+
+    * {
+      box-sizing: border-box;
+    }
+
     body {
-      margin:0; background:var(--bg); color:var(--txt);
-      font:15px/1.5 system-ui, -apple-system, sans-serif; padding:16px; max-width:980px;
-      margin-inline:auto;
+      margin: 0;
+      background: var(--bg);
+      color: var(--txt);
+      font: 15px/1.5 system-ui, -apple-system, sans-serif;
+      padding: 16px;
+      max-width: 980px;
+      margin-inline: auto;
     }
-    header { display:flex; align-items:baseline; gap:12px; margin-bottom:14px; flex-wrap:wrap; }
-    h1 { font-size:1.25rem; margin:0; }
-    #status { font-size:.85rem; color:var(--muted); }
-    #status.up   { color:var(--ok); }
-    #status.down { color:var(--bad); }
-    .grid { display:grid; gap:12px; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); margin-bottom:12px; }
-    .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
-    .card h2 { font-size:.72rem; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:0 0 6px; font-weight:600; }
-    .stat { font-size:28px; font-weight:500; font-variant-numeric:tabular-nums; }
-    .stat small { font-size:14px; color:var(--muted); }
-    .sub { font-size:.8rem; color:var(--muted); margin-top:2px; }
-    .dots { display:flex; gap:16px; margin-top:4px; }
-    .dotrow { display:flex; align-items:center; gap:7px; font-size:.85rem; color:var(--muted); }
-    .dot { width:11px; height:11px; border-radius:50%; background:var(--line); transition:background .15s; }
-    .dot.on { background:var(--accent); box-shadow:0 0 8px var(--accent); }
-    #temp-card, #hum-card, #fan-plot-card, #heater-plot-card, #humid-plot-card {
-      padding:14px 12px 8px; margin-top:12px;
+
+    header {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
     }
-    .plot-head { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:0 4px 8px; }
-    .plot-head h2 { margin:0; }
+
+    h1 {
+      font-size: 1.25rem;
+      margin: 0;
+    }
+
+    #status {
+      font-size: .85rem;
+      color: var(--muted);
+    }
+
+    #status.up {
+      color: var(--ok);
+    }
+
+    #status.down {
+      color: var(--bad);
+    }
+
+    .grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      margin-bottom: 12px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px 16px;
+    }
+
+    .card h2 {
+      font-size: .72rem;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      color: var(--muted);
+      margin: 0 0 6px;
+      font-weight: 600;
+    }
+
+    .stat {
+      font-size: 28px;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .stat small {
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .sub {
+      font-size: .8rem;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    .dots {
+      display: flex;
+      gap: 16px;
+      margin-top: 4px;
+    }
+
+    .dotrow {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: .85rem;
+      color: var(--muted);
+    }
+
+    .dot {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: var(--line);
+      transition: background .15s;
+    }
+
+    .dot.on {
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent);
+    }
+
+    #temp-card,
+    #hum-card,
+    #fan-plot-card,
+    #heater-plot-card,
+    #humid-plot-card {
+      padding: 14px 12px 8px;
+      margin-top: 12px;
+    }
+
+    .plot-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 0 4px 8px;
+    }
+
+    .plot-head h2 {
+      margin: 0;
+    }
+
     .plot-toggle {
-      background:transparent; color:var(--txt); border:1px solid var(--line);
-      border-radius:8px; padding:5px 10px; font-size:.82rem;
+      background: transparent;
+      color: var(--txt);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 5px 10px;
+      font-size: .82rem;
     }
-    .plot-body.hidden { display:none; }
-    #chart-temp, #chart-hum, #chart-fan, #chart-heater, #chart-humid {
-      max-width:100%; overflow-x:auto;
+
+    .plot-body.hidden {
+      display: none;
     }
-    .legend { display:flex; flex-wrap:wrap; gap:16px; padding:8px 6px 2px; font-size:.82rem; color:var(--muted); }
-    .legend span { display:inline-flex; align-items:center; gap:7px; }
-    .legend i { width:20px; border-top:3px solid; display:inline-block; }
-    .legend i.dash { border-top-width:2px; border-top-style:dashed; }
+
+    #chart-temp,
+    #chart-hum,
+    #chart-fan,
+    #chart-heater,
+    #chart-humid {
+      max-width: 100%;
+      overflow-x: auto;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      padding: 8px 6px 2px;
+      font-size: .82rem;
+      color: var(--muted);
+    }
+
+    .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .legend i {
+      width: 20px;
+      border-top: 3px solid;
+      display: inline-block;
+    }
+
+    .legend i.dash {
+      border-top-width: 2px;
+      border-top-style: dashed;
+    }
+
     .readout {
-      min-height:24px; display:flex; flex-wrap:wrap; gap:14px; align-items:center;
-      padding:6px 6px 0; color:var(--txt); font-size:.85rem; font-variant-numeric:tabular-nums;
+      min-height: 24px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      align-items: center;
+      padding: 6px 6px 0;
+      color: var(--txt);
+      font-size: .85rem;
+      font-variant-numeric: tabular-nums;
     }
-    .readout .time { color:var(--muted); }
-    .readout .empty { color:var(--muted); }
-    .controls { display:flex; flex-direction:column; gap:16px; }
-    .control-section { width:100%; }
+
+    .readout .time {
+      color: var(--muted);
+    }
+
+    .readout .empty {
+      color: var(--muted);
+    }
+
+    .controls {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .control-section {
+      width: 100%;
+    }
+
     .control-section h3 {
-      font-size:.72rem; text-transform:uppercase; letter-spacing:.05em;
-      color:var(--muted); margin:0 0 8px; font-weight:600;
+      font-size: .72rem;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      color: var(--muted);
+      margin: 0 0 8px;
+      font-weight: 600;
     }
+
     .section-note {
-      font-size:.82rem; line-height:1.5; color:var(--muted);
-      margin:0 0 12px; max-width:760px;
+      font-size: .82rem;
+      line-height: 1.5;
+      color: var(--muted);
+      margin: 0 0 12px;
+      max-width: 760px;
     }
-    .section-note strong { color:var(--txt); font-weight:600; }
-    .control-row { display:flex; flex-wrap:wrap; gap:18px; align-items:flex-end; }
-    .field { display:flex; flex-direction:column; gap:5px; }
-    .field label { font-size:.78rem; color:var(--muted); }
-    .field.changed label { color:var(--changed); }
+
+    .section-note strong {
+      color: var(--txt);
+      font-weight: 600;
+    }
+
+    .control-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 18px;
+      align-items: flex-end;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .field label {
+      font-size: .78rem;
+      color: var(--muted);
+    }
+
+    .field.changed label {
+      color: var(--changed);
+    }
+
     .field.changed .stepper input,
     .field.changed .seg {
-      border-color:var(--changed);
-      box-shadow:0 0 0 1px rgba(37,180,111,.35);
+      border-color: var(--changed);
+      box-shadow: 0 0 0 1px rgba(37, 180, 111, .35);
     }
-    .field.changed .stepper button { border-color:var(--changed); }
-    .field.changed .seg button.active { background:var(--changed); color:#fff; }
-    .inline { flex-direction:row; align-items:center; gap:8px; min-height:45px; }
-    .inline input { width:18px; height:18px; accent-color:var(--accent); }
-    .stepper { display:flex; align-items:stretch; }
-    .stepper button { width:42px; font-size:20px; background:var(--bg); color:var(--txt); border:1px solid var(--line); }
-    .stepper button:first-child { border-radius:8px 0 0 8px; }
-    .stepper button:last-child  { border-radius:0 8px 8px 0; }
+
+    .field.changed .stepper button {
+      border-color: var(--changed);
+    }
+
+    .field.changed .seg button.active {
+      background: var(--changed);
+      color: #fff;
+    }
+
+    .inline {
+      flex-direction: row;
+      align-items: center;
+      gap: 8px;
+      min-height: 45px;
+    }
+
+    .inline input {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--accent);
+    }
+
+    .stepper {
+      display: flex;
+      align-items: stretch;
+    }
+
+    .stepper button {
+      width: 42px;
+      font-size: 20px;
+      background: var(--bg);
+      color: var(--txt);
+      border: 1px solid var(--line);
+    }
+
+    .stepper button:first-child {
+      border-radius: 8px 0 0 8px;
+    }
+
+    .stepper button:last-child {
+      border-radius: 0 8px 8px 0;
+    }
+
     .stepper input {
-      width:74px; text-align:center; font-size:18px; font-variant-numeric:tabular-nums;
-      background:var(--bg); color:var(--txt); border:1px solid var(--line); border-left:0; border-right:0;
+      width: 74px;
+      text-align: center;
+      font-size: 18px;
+      font-variant-numeric: tabular-nums;
+      background: var(--bg);
+      color: var(--txt);
+      border: 1px solid var(--line);
+      border-left: 0;
+      border-right: 0;
     }
-    button { cursor:pointer; padding:10px 18px; border:0; border-radius:8px; background:var(--accent); color:#fff; font-size:15px; }
-    button:active { transform:translateY(1px); }
-    button:disabled { cursor:not-allowed; opacity:.55; transform:none; }
-    button.ghost { background:transparent; color:var(--txt); border:1px solid var(--line); }
-    .seg { display:flex; align-items:stretch; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
-    .seg button { border-radius:0; background:var(--bg); color:var(--txt); border-right:1px solid var(--line); min-width:58px; }
-    .seg button:last-child { border-right:0; }
-    .seg button.active { background:var(--accent); color:#fff; }
-    .control-actions { display:flex; flex-wrap:wrap; gap:12px; align-items:center; width:100%; }
-    #apply { align-self:flex-end; }
-    #apply.has-changes { background:var(--changed); }
-    #power { min-width:120px; }
-    button.stopped { background:var(--ok); }
-    .spacer { flex:1; }
+
+    button {
+      cursor: pointer;
+      padding: 10px 18px;
+      border: 0;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 15px;
+    }
+
+    button:active {
+      transform: translateY(1px);
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: .55;
+      transform: none;
+    }
+
+    button.ghost {
+      background: transparent;
+      color: var(--txt);
+      border: 1px solid var(--line);
+    }
+
+    .seg {
+      display: flex;
+      align-items: stretch;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .seg button {
+      border-radius: 0;
+      background: var(--bg);
+      color: var(--txt);
+      border-right: 1px solid var(--line);
+      min-width: 58px;
+    }
+
+    .seg button:last-child {
+      border-right: 0;
+    }
+
+    .seg button.active {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .control-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      width: 100%;
+    }
+
+    #apply {
+      align-self: flex-end;
+    }
+
+    #apply.has-changes {
+      background: var(--changed);
+    }
+
+    #power {
+      min-width: 120px;
+    }
+
+    button.stopped {
+      background: var(--ok);
+    }
+
+    .spacer {
+      flex: 1;
+    }
+
     /* Alert banner: driven by the retained fermenter/alert topic the twin owns. */
-    #alert { display:none; align-items:center; gap:10px; background:var(--bad); color:#fff;
-             border-radius:10px; padding:11px 15px; margin-bottom:12px; font-size:.9rem; }
-    #alert.warn { background:#9a6a00; }
-    #alert.show { display:flex; }
-    #alert .code { font-weight:600; letter-spacing:.02em; }
+    #alert {
+      display: none;
+      align-items: center;
+      gap: 10px;
+      background: var(--bad);
+      color: #fff;
+      border-radius: 10px;
+      padding: 11px 15px;
+      margin-bottom: 12px;
+      font-size: .9rem;
+    }
+
+    #alert.warn {
+      background: #9a6a00;
+    }
+
+    #alert.show {
+      display: flex;
+    }
+
+    #alert .code {
+      font-weight: 600;
+      letter-spacing: .02em;
+    }
   </style>
 </head>
+
 <body>
   <header>
     <h1>Fermentation chamber</h1>
@@ -227,7 +555,7 @@
     </div>
   </div>
 
-  <!-- Controls: publish to fermenter/cmd/setpoint and fermenter/cmd/control -->
+  <!-- Controls: POST to /api/command, which validates then publishes to the broker -->
   <div class="card" style="margin-top:12px">
     <h2>Controls</h2>
     <div class="controls">
@@ -646,21 +974,25 @@
     // horizontal lines at given scale values (the setpoints). Identification is
     // left to the legend below the chart, not text drawn on the line.
     function hLines(getLines) {
-      return { hooks: { draw: (u) => {
-        const { ctx } = u, { left, top, width, height } = u.bbox;
-        ctx.save();
-        ctx.lineWidth = 1;
-        for (const ln of getLines()) {
-          if (ln.value == null || isNaN(ln.value)) continue;
-          const y = u.valToPos(ln.value, ln.scale, true);
-          if (y < top || y > top + height) continue; // off-screen, skip
-          ctx.beginPath();
-          ctx.setLineDash(ln.dash || []);
-          ctx.strokeStyle = ln.color;
-          ctx.moveTo(left, y); ctx.lineTo(left + width, y); ctx.stroke();
+      return {
+        hooks: {
+          draw: (u) => {
+            const { ctx } = u, { left, top, width, height } = u.bbox;
+            ctx.save();
+            ctx.lineWidth = 1;
+            for (const ln of getLines()) {
+              if (ln.value == null || isNaN(ln.value)) continue;
+              const y = u.valToPos(ln.value, ln.scale, true);
+              if (y < top || y > top + height) continue; // off-screen, skip
+              ctx.beginPath();
+              ctx.setLineDash(ln.dash || []);
+              ctx.strokeStyle = ln.color;
+              ctx.moveTo(left, y); ctx.lineTo(left + width, y); ctx.stroke();
+            }
+            ctx.restore();
+          }
         }
-        ctx.restore();
-      } } };
+      };
     }
 
     function fmtTime(sec) {
@@ -674,33 +1006,40 @@
     }
 
     function cursorReadout(elId, rows) {
-      return { hooks: { setCursor: (u) => {
-        const idx = u.cursor.idx;
-        const el = $(elId);
-        if (idx == null || idx < 0 || idx >= xs.length) {
-          el.innerHTML = '<span class="empty">Hover plot for readings</span>';
-          return;
+      return {
+        hooks: {
+          setCursor: (u) => {
+            const idx = u.cursor.idx;
+            const el = $(elId);
+            if (idx == null || idx < 0 || idx >= xs.length) {
+              el.innerHTML = '<span class="empty">Hover plot for readings</span>';
+              return;
+            }
+            const values = rows.map((r) =>
+              `<span><strong style="color:${r.color}">${r.label}</strong> ${fmtValue(r.data[idx], r.digits, r.unit)}</span>`);
+            el.innerHTML = `<span class="time">${fmtTime(xs[idx])}</span>${values.join("")}`;
+          }
         }
-        const values = rows.map((r) =>
-          `<span><strong style="color:${r.color}">${r.label}</strong> ${fmtValue(r.data[idx], r.digits, r.unit)}</span>`);
-        el.innerHTML = `<span class="time">${fmtTime(xs[idx])}</span>${values.join("")}`;
-      } } };
+      };
     }
 
     function cursorReadoutAct(elId, rows) {
-      return { hooks: { setCursor: (u) => {
-        const idx = u.cursor.idx;
-        const el = $(elId);
-        if (idx == null || idx < 0 || idx >= xsAct.length) {
-          el.innerHTML = '<span class="empty">Hover plot for readings</span>';
-          return;
+      return {
+        hooks: {
+          setCursor: (u) => {
+            const idx = u.cursor.idx;
+            const el = $(elId);
+            if (idx == null || idx < 0 || idx >= xsAct.length) {
+              el.innerHTML = '<span class="empty">Hover plot for readings</span>';
+              return;
+            }
+            const values = rows.map((r) =>
+              `<span><strong style="color:${r.color}">${r.label}</strong> ${r.format ? r.format(r.data[idx]) : fmtValue(r.data[idx], r.digits, r.unit)
+              }</span>`);
+            el.innerHTML = `<span class="time">${fmtTime(xsAct[idx])}</span>${values.join("")}`;
+          }
         }
-        const values = rows.map((r) =>
-          `<span><strong style="color:${r.color}">${r.label}</strong> ${
-            r.format ? r.format(r.data[idx]) : fmtValue(r.data[idx], r.digits, r.unit)
-          }</span>`);
-        el.innerHTML = `<span class="time">${fmtTime(xsAct[idx])}</span>${values.join("")}`;
-      } } };
+      };
     }
 
     function onOff(v) {
@@ -743,13 +1082,13 @@
       scales: { x: xScale, C: { range: rangeWith(() => sp.targetTemp) } },
       series: [
         {},
-        { label: "Inside °C",  stroke: "#d85a30", scale: "C", width: 2 },
+        { label: "Inside °C", stroke: "#d85a30", scale: "C", width: 2 },
         { label: "Ambient °C", stroke: "#e0b020", scale: "C", width: 2 },
       ],
-      axes: [ xAxis(), { scale: "C", stroke: "#8b929f", grid: GRID, ticks: GRID } ],
+      axes: [xAxis(), { scale: "C", stroke: "#8b929f", grid: GRID, ticks: GRID }],
       plugins: [
         hLines(() => [
-          { scale: "C", value: sp.targetTemp,    color: "#d85a30", dash: [6, 4] },
+          { scale: "C", value: sp.targetTemp, color: "#d85a30", dash: [6, 4] },
           { scale: "C", value: sp.targetCeiling, color: "#b32424", dash: [2, 4] },
         ]),
         cursorReadout("readout-temp", [
@@ -767,7 +1106,7 @@
         {},
         { label: "Humidity %", stroke: "#4a90e2", scale: "%", width: 2 },
       ],
-      axes: [ xAxis(), { scale: "%", stroke: "#8b929f", grid: GRID, ticks: GRID } ],
+      axes: [xAxis(), { scale: "%", stroke: "#8b929f", grid: GRID, ticks: GRID }],
       plugins: [
         hLines(() => [
           { scale: "%", value: sp.targetHumidity, color: "#4a90e2", dash: [6, 4] },
@@ -810,7 +1149,7 @@
       uTemp.setData([xs, tIn, tAmb]);
       uHum.setData([xs, hum]);
       $("v-temp").textContent = d.dsTemp.toFixed(2);
-      $("v-hum").textContent  = d.humidity.toFixed(1);
+      $("v-hum").textContent = d.humidity.toFixed(1);
     }
 
     function pushActuatorPoint(d) {
@@ -879,11 +1218,11 @@
     function applyState(d) {
       pushActuatorPoint(d);
       $("v-temp-set").textContent = d.targetTemp.toFixed(1);
-      $("v-hum-set").textContent  = d.targetHumidity.toFixed(0);
-      $("v-ceil").textContent     = d.targetCeiling.toFixed(1);
-      $("v-ds-max").textContent   = (d.dsMaxOverTarget ?? 0).toFixed(1);
+      $("v-hum-set").textContent = d.targetHumidity.toFixed(0);
+      $("v-ceil").textContent = d.targetCeiling.toFixed(1);
+      $("v-ds-max").textContent = (d.dsMaxOverTarget ?? 0).toFixed(1);
       $("v-control-sensor").textContent = d.controlSensor || "ds";
-      $("v-fan").textContent      = d.fanDuty;
+      $("v-fan").textContent = d.fanDuty;
       $("dot-heater").classList.toggle("on", d.heaterOn);
       $("dot-humid").classList.toggle("on", d.humidOn);
       applyTimeFields(d);
@@ -899,7 +1238,7 @@
       }
       $("v-humid-note").textContent =
         humidOverride === "off" ? "Humidifier forced off" :
-        humidOverride === "on" ? "Humidifier forced on" : "";
+          humidOverride === "on" ? "Humidifier forced on" : "";
 
       // Feed the threshold lines and redraw so they track a changed setpoint
       // immediately (the y-range also keys off these, so a redraw re-frames).
@@ -935,7 +1274,7 @@
 
       // Only seed an input the user has not edited since the last send.
       if (!dirty.has("in-temp")) tempInput.value = d.targetTemp;
-      if (!dirty.has("in-hum"))  humInput.value  = d.targetHumidity;
+      if (!dirty.has("in-hum")) humInput.value = d.targetHumidity;
       if (!dirty.has("in-ceil")) ceilInput.value = d.targetCeiling;
       if (!dirty.has("in-ds-max")) dsMaxInput.value = d.dsMaxOverTarget ?? 0;
       if (!dirty.has("in-hyst")) hystInput.value = d.hysteresis ?? "";
@@ -965,26 +1304,68 @@
       recomputeDirty();
     }
 
-    // ---- MQTT over WebSocket ---------------------------------------------
-    const url = `ws://${location.hostname}:9001`;
-    const client = mqtt.connect(url);
-    client.on("connect", () => {
-      setStatus(`connected — ${url}`, true);
-      client.subscribe("fermenter/telemetry");
-      client.subscribe("fermenter/state");
-      client.subscribe("fermenter/alert");
-    });
-    client.on("reconnect", () => setStatus("reconnecting…", false));
-    client.on("close",     () => setStatus("disconnected", false));
-    client.on("error",     (e) => setStatus("error: " + e.message, false));
-    client.on("message", (topic, payload) => {
-      // fermenter/alert is retained and cleared with an empty payload, so handle
-      // it before the JSON parse (an empty body means "no active fault").
-      if (topic === "fermenter/alert") { applyAlert(payload.toString()); return; }
-      let d; try { d = JSON.parse(payload.toString()); } catch { return; }
-      if (topic === "fermenter/telemetry") pushPoint(d);
-      else if (topic === "fermenter/state") applyState(d);
-    });
+    async function backfill(hours = 6) {
+      try {
+        const h = await (await fetch(`/api/history?hours=${hours}`)).json();
+        xs = h.t; tIn = h.dsTemp; tAmb = h.bmeTemp; hum = h.humidity;
+        if (xs.length > MAX) {              // respect the in-memory cap
+          const s = xs.length - MAX;
+          xs = xs.slice(s); tIn = tIn.slice(s); tAmb = tAmb.slice(s); hum = hum.slice(s);
+        }
+        uTemp.setData([xs, tIn, tAmb]);
+        uHum.setData([xs, hum]);
+      } catch (_) { /* API unreachable — live data still works */ }
+    }
+    backfill();   // runs once at startup; live MQTT points append on top
+
+    // ---- live data: FastAPI WebSocket relay ------------------------------
+    // The browser no longer speaks MQTT (no broker credential in this page).
+    // The backend subscribes to the broker and relays telemetry/state/alert
+    // here as {topic, payload} frames; commands go back via POST /api/command.
+    let liveSocket = null;
+    function connectLive() {
+      const proto = location.protocol === "https:" ? "wss" : "ws";
+      const ws = new WebSocket(`${proto}://${location.host}/ws`);
+      liveSocket = ws;
+      ws.onopen = () => setStatus("connected", true);
+      ws.onclose = () => {
+        setStatus("disconnected — reconnecting…", false);
+        setTimeout(connectLive, 2000);   // backend or page offline; retry
+      };
+      ws.onerror = () => ws.close();      // onclose handles the retry
+      ws.onmessage = (ev) => {
+        let frame; try { frame = JSON.parse(ev.data); } catch { return; }
+        const { topic, payload } = frame;
+        // fermenter/alert is retained and cleared with an empty payload, so
+        // handle it before the JSON parse (an empty body means "no fault").
+        if (topic === "fermenter/alert") { applyAlert(payload); return; }
+        let d; try { d = JSON.parse(payload); } catch { return; }
+        if (topic === "fermenter/telemetry") pushPoint(d);
+        else if (topic === "fermenter/state") applyState(d);
+      };
+    }
+    connectLive();
+
+    // Send a command through the backend mediator, which validates and clamps
+    // it before publishing to the broker. The fermenter/state echo remains the
+    // real confirmation, exactly as before.
+    async function sendCommand(body) {
+      try {
+        const r = await fetch("/api/command", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!r.ok) {
+          setStatus(`command rejected (${r.status})`, false);
+          return false;
+        }
+        return true;
+      } catch {
+        setStatus("command failed — backend offline?", false);
+        return false;
+      }
+    }
 
     // ---- alert: active fault banner from the twin -------------------------
     function applyAlert(raw) {
@@ -1088,31 +1469,28 @@
         setpoint.runMinutes = runtimeMinutes;
       }
 
-      if (Object.keys(setpoint).length > 0) {
-        client.publish("fermenter/cmd/setpoint", JSON.stringify(setpoint));
-      }
-
+      const controls = [];
       if (dirty.has("heater")) {
-        client.publish("fermenter/cmd/control", JSON.stringify({
-          action: heaterOverride === "auto" ? "heater_auto" : `heater_${heaterOverride}`,
-        }));
+        controls.push(heaterOverride === "auto" ? "heater_auto" : `heater_${heaterOverride}`);
       }
       if (dirty.has("humid")) {
-        client.publish("fermenter/cmd/control", JSON.stringify({
-          action: humidOverride === "auto" ? "humidifier_auto" : `humidifier_${humidOverride}`,
-        }));
+        controls.push(humidOverride === "auto" ? "humidifier_auto" : `humidifier_${humidOverride}`);
       }
+
+      const body = {};
+      if (Object.keys(setpoint).length > 0) body.setpoint = setpoint;
+      if (controls.length > 0) body.controls = controls;
+      if (Object.keys(body).length > 0) sendCommand(body);
 
       clearDirtyControls(); // hand the fields back to the device's echoed truth
     });
 
     powerBtn.addEventListener("click", () => {
       // Mirrors the physical knob: start (resets run timer) vs stop.
-      client.publish("fermenter/cmd/control", JSON.stringify({
-        action: halted ? "start" : "stop",
-      }));
+      sendCommand({ controls: [halted ? "start" : "stop"] });
     });
 
   </script>
 </body>
+
 </html>
