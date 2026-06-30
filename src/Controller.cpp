@@ -275,15 +275,15 @@ void Controller::update(const Setpoints &sp, const SensorReadings &s)
     //   otherwise              -> circulation floor, just keep the air mixed
     int fanPct;
     if (state_.heaterOn || (long)(fanFullUntilMs_ - now) > 0)
-        fanPct = FAN_DUTY_MAX_PCT; // heater wins
+        fanPct = constrain(sp.fanHeatPct, 0, FAN_DUTY_MAX_PCT); // heater wins
     else if (!tempValid)
-        fanPct = FAN_DUTY_MAX_PCT; // blind -> full circulation
+        fanPct = FAN_DUTY_MAX_PCT; // blind -> full circulation (failsafe stays full)
     else if (sp.fanManualPct >= 0)
         fanPct = sp.fanManualPct > FAN_DUTY_MAX_PCT ? FAN_DUTY_MAX_PCT : sp.fanManualPct;
     else if (state_.humidOn)
-        fanPct = FAN_DUTY_HUMID_PCT;
+        fanPct = constrain(sp.fanHumidPct, 0, FAN_DUTY_MAX_PCT);
     else
-        fanPct = FAN_DUTY_MIN_PCT; // always-on circulation floor
+        fanPct = constrain(sp.fanAutoPct, 0, FAN_DUTY_MAX_PCT); // always-on circulation floor
 
     state_.fanOn = fanPct > 0;
     state_.fanDuty = (uint8_t)fanPct;

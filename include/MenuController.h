@@ -94,6 +94,11 @@ public:
     void setDsMaxOverTarget(float c) { dsMaxOverTarget_ = c; }
     void setControlSensor(ControlSensor s) { controlSensor_ = s < CONTROL_SENSOR_COUNT ? s : CONTROL_SENSOR_DS; }
     void setFanManualPct(int pct) { fanManualPct_ = pct; }
+
+    // AUTO-mode fan duties (clamped 0..100). Drive the conditioning fan speeds.
+    void setFanHeatPct(int pct) { fanHeatPct_ = clampFanPct(pct); }
+    void setFanHumidPct(int pct) { fanHumidPct_ = clampFanPct(pct); }
+    void setFanAutoPct(int pct) { fanAutoPct_ = clampFanPct(pct); }
     void setRunMinutes(long m) { runMinutes_ = m; }
     void setHeaterOverride(int8_t v) { heaterOverride_ = clampOverride(v); }
     void setHumidOverride(int8_t v) { humidOverride_ = clampOverride(v); }
@@ -126,6 +131,7 @@ private:
     void applyEdit(int dir, int mult);          // adjust the open item's value
     const ItemKind *groupItems(uint8_t &count) const;
     static int8_t clampOverride(int8_t v) { return v < -1 ? -1 : (v > 1 ? 1 : v); }
+    static int clampFanPct(int v) { return v < 0 ? 0 : (v > FAN_DUTY_MAX_PCT ? FAN_DUTY_MAX_PCT : v); }
 
     static void IRAM_ATTR encoderTrampoline();
     static MenuController *instance_;
@@ -151,6 +157,9 @@ private:
     volatile float dsMaxOverTarget_;
     volatile ControlSensor controlSensor_;
     volatile int fanManualPct_; // FAN_MANUAL_AUTO (-1) = AUTO; 0..100 = manual duty %
+    volatile int fanHeatPct_;   // AUTO fan duty while heater on
+    volatile int fanHumidPct_;  // AUTO fan duty while humidifier on
+    volatile int fanAutoPct_;   // AUTO fan duty for the circulation floor
     volatile long runMinutes_;
     volatile int8_t heaterOverride_ = 0; // -1 off, 0 auto, 1 on
     volatile int8_t humidOverride_ = 0;  // -1 off, 0 auto, 1 on

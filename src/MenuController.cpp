@@ -15,6 +15,9 @@ MenuController::MenuController()
       dsMaxOverTarget_(DEFAULT_DS_MAX_OVER_TARGET),
       controlSensor_(CONTROL_SENSOR_DS),
       fanManualPct_(FAN_MANUAL_AUTO), // AUTO (conditioning-driven circulation)
+      fanHeatPct_(FAN_DUTY_MAX_PCT),
+      fanHumidPct_(FAN_DUTY_HUMID_PCT),
+      fanAutoPct_(FAN_DUTY_MIN_PCT),
       runMinutes_(DEFAULT_RUN_MINUTES),
       hysteresis_(HYSTERESIS),
       fanAfterHeatSec_((long)(FAN_AFTER_HEAT_MS / 1000UL)),
@@ -147,6 +150,9 @@ Setpoints MenuController::setpoints() const
     sp.dsMaxOverTarget = dsMaxOverTarget_;
     sp.controlSensor = controlSensor_;
     sp.fanManualPct = fanManualPct_;
+    sp.fanHeatPct = fanHeatPct_;
+    sp.fanHumidPct = fanHumidPct_;
+    sp.fanAutoPct = fanAutoPct_;
     sp.runMinutes = runMinutes_;
     sp.hysteresis = hysteresis_;
     sp.fanAfterHeatSec = fanAfterHeatSec_;

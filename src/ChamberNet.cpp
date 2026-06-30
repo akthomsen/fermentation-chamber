@@ -275,22 +275,45 @@ void ChamberNet::publishState()
         snprintf(controlTemp, sizeof(controlTemp), "%.1f", a.controlTemp);
     else
         snprintf(controlTemp, sizeof(controlTemp), "null");
-    char buf[512];
+
+    // Run-timer readouts the UI mirrors. Time only accrues while a run is live;
+    // a not-started/stopped chamber reports zero elapsed and the full limit left.
+    long upMinutes = 0;
+    long leftMinutes = sp.runMinutes;
+    if (!a.notStarted && !a.stopped)
+    {
+        upMinutes = (long)((millis() - controller_->runStartMs()) / 60000UL);
+        leftMinutes = sp.runMinutes > 0 ? sp.runMinutes - upMinutes : 0;
+        if (a.runComplete)
+        {
+            upMinutes = sp.runMinutes;
+            leftMinutes = 0;
+        }
+        if (leftMinutes < 0)
+            leftMinutes = 0;
+    }
+
+    char buf[600];
     const int n = snprintf(buf, sizeof(buf),
                            "{\"targetTemp\":%.1f,\"targetHumidity\":%.0f,\"targetCeiling\":%.1f,"
                            "\"dsMaxOverTarget\":%.1f,\"controlSensor\":\"%s\",\"controlTemp\":%s,"
-                           "\"runMinutes\":%ld,\"fanManualPct\":%d,\"fanDuty\":%u,"
+                           "\"runMinutes\":%ld,\"upMinutes\":%ld,\"leftMinutes\":%ld,"
+                           "\"fanManualPct\":%d,\"fanDuty\":%u,"
+                           "\"fanHeatPct\":%d,\"fanHumidPct\":%d,\"fanAutoPct\":%d,"
                            "\"heaterOn\":%s,\"heaterOverride\":\"%s\",\"humidOn\":%s,"
-                           "\"humidOverride\":\"%s\",\"halted\":%s,"
+                           "\"humidOverride\":\"%s\",\"halted\":%s,\"runComplete\":%s,"
                            "\"hysteresis\":%.1f,\"fanAfterHeatSec\":%ld,"
                            "\"maxHeatMin\":%ld,\"heatCooldownMin\":%ld}",
                            sp.targetTemp, sp.targetHumidity, sp.targetCeiling,
                            sp.dsMaxOverTarget, controlSensorName(a.controlSensor), controlTemp,
-                           sp.runMinutes, sp.fanManualPct, a.fanDuty,
+                           sp.runMinutes, upMinutes, leftMinutes,
+                           sp.fanManualPct, a.fanDuty,
+                           sp.fanHeatPct, sp.fanHumidPct, sp.fanAutoPct,
                            a.heaterOn ? "true" : "false", heaterOverride,
                            a.humidOn ? "true" : "false",
                            humidOverride,
                            a.halted() ? "true" : "false",
+                           a.runComplete ? "true" : "false",
                            sp.hysteresis, sp.fanAfterHeatSec,
                            sp.maxHeatMin, sp.heatCooldownMin);
     if (n < 0 || (size_t)n >= sizeof(buf))
@@ -383,6 +406,21 @@ void ChamberNet::handleMessage(char *topic, byte *payload, unsigned int len)
             const int pct = constrain(i, FAN_MANUAL_AUTO, FAN_DUTY_MAX_PCT);
             menu_->setFanManualPct(pct);
             controller_->setFanSpeed(pct);
+            handled = true;
+        }
+        if (readInt(obj, "fanHeatPct", i))
+        {
+            menu_->setFanHeatPct(i); // clamps 0..100
+            handled = true;
+        }
+        if (readInt(obj, "fanHumidPct", i))
+        {
+            menu_->setFanHumidPct(i);
+            handled = true;
+        }
+        if (readInt(obj, "fanAutoPct", i))
+        {
+            menu_->setFanAutoPct(i);
             handled = true;
         }
         if (readLong(obj, "runMinutes", l))

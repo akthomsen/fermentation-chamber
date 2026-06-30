@@ -11,6 +11,7 @@
     :root {
       --bg:#0f1115; --card:#1a1d24; --line:#2a2f3a; --txt:#e6e8ec;
       --muted:#8b929f; --accent:#d85a30; --blue:#4a90e2; --ok:#1d9e75; --bad:#b32424;
+      --changed:#25b46f;
     }
     * { box-sizing: border-box; }
     body {
@@ -56,9 +57,28 @@
     }
     .readout .time { color:var(--muted); }
     .readout .empty { color:var(--muted); }
-    .controls { display:flex; flex-wrap:wrap; gap:18px; align-items:flex-end; }
+    .controls { display:flex; flex-direction:column; gap:16px; }
+    .control-section { width:100%; }
+    .control-section h3 {
+      font-size:.72rem; text-transform:uppercase; letter-spacing:.05em;
+      color:var(--muted); margin:0 0 8px; font-weight:600;
+    }
+    .section-note {
+      font-size:.82rem; line-height:1.5; color:var(--muted);
+      margin:0 0 12px; max-width:760px;
+    }
+    .section-note strong { color:var(--txt); font-weight:600; }
+    .control-row { display:flex; flex-wrap:wrap; gap:18px; align-items:flex-end; }
     .field { display:flex; flex-direction:column; gap:5px; }
     .field label { font-size:.78rem; color:var(--muted); }
+    .field.changed label { color:var(--changed); }
+    .field.changed .stepper input,
+    .field.changed .seg {
+      border-color:var(--changed);
+      box-shadow:0 0 0 1px rgba(37,180,111,.35);
+    }
+    .field.changed .stepper button { border-color:var(--changed); }
+    .field.changed .seg button.active { background:var(--changed); color:#fff; }
     .inline { flex-direction:row; align-items:center; gap:8px; min-height:45px; }
     .inline input { width:18px; height:18px; accent-color:var(--accent); }
     .stepper { display:flex; align-items:stretch; }
@@ -71,12 +91,15 @@
     }
     button { cursor:pointer; padding:10px 18px; border:0; border-radius:8px; background:var(--accent); color:#fff; font-size:15px; }
     button:active { transform:translateY(1px); }
+    button:disabled { cursor:not-allowed; opacity:.55; transform:none; }
     button.ghost { background:transparent; color:var(--txt); border:1px solid var(--line); }
     .seg { display:flex; align-items:stretch; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
     .seg button { border-radius:0; background:var(--bg); color:var(--txt); border-right:1px solid var(--line); min-width:58px; }
     .seg button:last-child { border-right:0; }
     .seg button.active { background:var(--accent); color:#fff; }
+    .control-actions { display:flex; flex-wrap:wrap; gap:12px; align-items:center; width:100%; }
     #apply { align-self:flex-end; }
+    #apply.has-changes { background:var(--changed); }
     #power { min-width:120px; }
     button.stopped { background:var(--ok); }
     .spacer { flex:1; }
@@ -122,6 +145,12 @@
       </div>
       <div class="sub" id="v-halted" style="margin-top:8px">—</div>
       <div class="sub" id="v-humid-note" style="margin-top:4px;color:var(--accent)"></div>
+    </div>
+    <div class="card">
+      <h2>Run time</h2>
+      <div class="stat"><span id="v-time-left">–</span></div>
+      <div class="sub">left</div>
+      <div class="sub">set <span id="v-time-set">–</span> · up <span id="v-time-up">–</span></div>
     </div>
   </div>
 
@@ -202,96 +231,197 @@
   <div class="card" style="margin-top:12px">
     <h2>Controls</h2>
     <div class="controls">
-      <div class="field">
-        <label for="in-temp">Target temp °C</label>
-        <div class="stepper">
-          <button type="button" data-step="-0.5" data-target="in-temp">−</button>
-          <input id="in-temp" type="number" step="0.5" min="0" max="45">
-          <button type="button" data-step="0.5" data-target="in-temp">+</button>
+      <section class="control-section">
+        <h3>Settings</h3>
+        <div class="control-row">
+          <div class="field">
+            <label for="in-temp">Target temp °C</label>
+            <div class="stepper">
+              <button type="button" data-step="-0.5" data-target="in-temp">−</button>
+              <input id="in-temp" type="number" step="0.5" min="0" max="45">
+              <button type="button" data-step="0.5" data-target="in-temp">+</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="in-hum">Target humidity %</label>
+            <div class="stepper">
+              <button type="button" data-step="-1" data-target="in-hum">−</button>
+              <input id="in-hum" type="number" step="1" min="0" max="100">
+              <button type="button" data-step="1" data-target="in-hum">+</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="in-ceil">Ceiling °C</label>
+            <div class="stepper">
+              <button type="button" data-step="-0.5" data-target="in-ceil">−</button>
+              <input id="in-ceil" type="number" step="0.5" min="0" max="70">
+              <button type="button" data-step="0.5" data-target="in-ceil">+</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="in-ds-max">DS max over target °C</label>
+            <div class="stepper">
+              <button type="button" data-step="-0.5" data-target="in-ds-max">−</button>
+              <input id="in-ds-max" type="number" step="0.5" min="0" max="70">
+              <button type="button" data-step="0.5" data-target="in-ds-max">+</button>
+            </div>
+          </div>
+          <div class="field">
+            <label>Control sensor</label>
+            <div class="seg" id="control-sensor-seg">
+              <button type="button" data-control-sensor="ds">DS</button>
+              <button type="button" data-control-sensor="bme">BME</button>
+              <button type="button" data-control-sensor="average">Avg</button>
+            </div>
+          </div>
         </div>
-      </div>
-      <div class="field">
-        <label for="in-hum">Target humidity %</label>
-        <div class="stepper">
-          <button type="button" data-step="-1" data-target="in-hum">−</button>
-          <input id="in-hum" type="number" step="1" min="0" max="100">
-          <button type="button" data-step="1" data-target="in-hum">+</button>
+      </section>
+
+      <section class="control-section">
+        <h3>Advanced</h3>
+        <p class="section-note">
+          Tuning for the control loop and safety backstops. Bad values
+          are clamped to safe ranges on the device. <strong>Hysteresis</strong> is the
+          dead-band that stops the heater and humidifier short-cycling.
+          <strong>Fan after heat</strong> keeps the fan at 'Fan: heating %' for a while after
+          the heater turns off, so leftover heat is spread instead of pooling.
+          <strong>Max heat</strong> caps how long the heater may run continuously before
+          a forced <strong>heat cooldown</strong> kicks in.
+        </p>
+        <div class="control-row">
+          <div class="field">
+            <label for="in-hyst">Hysteresis °C</label>
+            <div class="stepper">
+              <button type="button" data-step="-0.1" data-target="in-hyst">−</button>
+              <input id="in-hyst" type="number" step="0.1" min="0.1" max="10">
+              <button type="button" data-step="0.1" data-target="in-hyst">+</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="in-fan-after-heat">Fan after heat s</label>
+            <div class="stepper">
+              <button type="button" data-step="-10" data-target="in-fan-after-heat">−</button>
+              <input id="in-fan-after-heat" type="number" step="10" min="0" max="3600">
+              <button type="button" data-step="10" data-target="in-fan-after-heat">+</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="in-max-heat">Max heat min</label>
+            <div class="stepper">
+              <button type="button" data-step="-1" data-target="in-max-heat">−</button>
+              <input id="in-max-heat" type="number" step="1" min="1" max="600">
+              <button type="button" data-step="1" data-target="in-max-heat">+</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="in-heat-cooldown">Heat cooldown min</label>
+            <div class="stepper">
+              <button type="button" data-step="-1" data-target="in-heat-cooldown">−</button>
+              <input id="in-heat-cooldown" type="number" step="1" min="0" max="600">
+              <button type="button" data-step="1" data-target="in-heat-cooldown">+</button>
+            </div>
+          </div>
         </div>
-      </div>
-      <div class="field">
-        <label for="in-ceil">Ceiling °C</label>
-        <div class="stepper">
-          <button type="button" data-step="-0.5" data-target="in-ceil">−</button>
-          <input id="in-ceil" type="number" step="0.5" min="0" max="70">
-          <button type="button" data-step="0.5" data-target="in-ceil">+</button>
+        <p class="section-note">
+          AUTO fan speeds. The fan only recirculates air inside the chamber, so in AUTO
+          it runs the whole time and the speed follows what is being conditioned:
+          full while the <strong>heater</strong> runs (distribute heat),
+          a bump while the <strong>humidifier</strong> runs (spread moisture), and a quiet
+          <strong>default</strong> floor otherwise just to keep the air mixed.
+          A manual fan setting overrides these.
+        </p>
+        <div class="control-row">
+          <div class="field">
+            <label for="in-fan-heat">Fan: heating %</label>
+            <div class="stepper">
+              <button type="button" data-step="-5" data-target="in-fan-heat">−</button>
+              <input id="in-fan-heat" type="number" step="5" min="0" max="100">
+              <button type="button" data-step="5" data-target="in-fan-heat">+</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="in-fan-humid">Fan: humidifying %</label>
+            <div class="stepper">
+              <button type="button" data-step="-5" data-target="in-fan-humid">−</button>
+              <input id="in-fan-humid" type="number" step="5" min="0" max="100">
+              <button type="button" data-step="5" data-target="in-fan-humid">+</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="in-fan-auto">Fan: default %</label>
+            <div class="stepper">
+              <button type="button" data-step="-5" data-target="in-fan-auto">−</button>
+              <input id="in-fan-auto" type="number" step="5" min="0" max="100">
+              <button type="button" data-step="5" data-target="in-fan-auto">+</button>
+            </div>
+          </div>
         </div>
-      </div>
-      <div class="field">
-        <label for="in-ds-max">DS max over target °C</label>
-        <div class="stepper">
-          <button type="button" data-step="-0.5" data-target="in-ds-max">−</button>
-          <input id="in-ds-max" type="number" step="0.5" min="0" max="70">
-          <button type="button" data-step="0.5" data-target="in-ds-max">+</button>
+      </section>
+
+      <section class="control-section">
+        <h3>Run time</h3>
+        <div class="control-row">
+          <div class="field">
+            <label for="in-run-hours">Runtime hours</label>
+            <div class="stepper">
+              <button type="button" data-step="-1" data-target="in-run-hours">−</button>
+              <input id="in-run-hours" type="number" step="1" min="0">
+              <button type="button" data-step="1" data-target="in-run-hours">+</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="in-run-minutes">Runtime minutes</label>
+            <div class="stepper">
+              <button type="button" data-step="-5" data-target="in-run-minutes">−</button>
+              <input id="in-run-minutes" type="number" step="5" min="0" max="59">
+              <button type="button" data-step="5" data-target="in-run-minutes">+</button>
+            </div>
+          </div>
         </div>
-      </div>
-      <div class="field">
-        <label>Control sensor</label>
-        <div class="seg" id="control-sensor-seg">
-          <button type="button" data-control-sensor="ds">DS</button>
-          <button type="button" data-control-sensor="bme">BME</button>
-          <button type="button" data-control-sensor="average">Avg</button>
+      </section>
+
+      <section class="control-section">
+        <h3>Actuator controls</h3>
+        <div class="control-row">
+          <div class="field">
+            <label>Heater</label>
+            <div class="seg" id="heater-seg">
+              <button type="button" data-heater="auto">Auto</button>
+              <button type="button" data-heater="off">Off</button>
+              <button type="button" data-heater="on">On</button>
+            </div>
+          </div>
+          <div class="field">
+            <label>Humidifier</label>
+            <div class="seg" id="humid-seg">
+              <button type="button" data-humid="auto">Auto</button>
+              <button type="button" data-humid="off">Off</button>
+              <button type="button" data-humid="on">On</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="in-fan">Fan %</label>
+            <div class="stepper">
+              <button type="button" data-step="-5" data-target="in-fan">−</button>
+              <input id="in-fan" type="number" step="5" min="0" max="100">
+              <button type="button" data-step="5" data-target="in-fan">+</button>
+            </div>
+          </div>
+          <div class="field">
+            <label>Fan mode</label>
+            <div class="seg" id="fan-seg">
+              <button type="button" data-fan-mode="auto">Auto</button>
+              <button type="button" data-fan-mode="manual">Manual</button>
+            </div>
+          </div>
         </div>
+      </section>
+
+      <div class="control-actions">
+        <button id="apply">Send commands</button>
+        <span class="spacer"></span>
+        <button id="power" class="ghost">Stop</button>
       </div>
-      <div class="field">
-        <label for="in-fan">Fan %</label>
-        <div class="stepper">
-          <button type="button" data-step="-5" data-target="in-fan">−</button>
-          <input id="in-fan" type="number" step="5" min="0" max="100">
-          <button type="button" data-step="5" data-target="in-fan">+</button>
-        </div>
-      </div>
-      <div class="field">
-        <label>Fan mode</label>
-        <div class="seg" id="fan-seg">
-          <button type="button" data-fan-mode="auto">Auto</button>
-          <button type="button" data-fan-mode="manual">Manual</button>
-        </div>
-      </div>
-      <div class="field">
-        <label for="in-run-hours">Runtime hours</label>
-        <div class="stepper">
-          <button type="button" data-step="-1" data-target="in-run-hours">−</button>
-          <input id="in-run-hours" type="number" step="1" min="0">
-          <button type="button" data-step="1" data-target="in-run-hours">+</button>
-        </div>
-      </div>
-      <div class="field">
-        <label for="in-run-minutes">Runtime minutes</label>
-        <div class="stepper">
-          <button type="button" data-step="-5" data-target="in-run-minutes">−</button>
-          <input id="in-run-minutes" type="number" step="5" min="0" max="59">
-          <button type="button" data-step="5" data-target="in-run-minutes">+</button>
-        </div>
-      </div>
-      <div class="field">
-        <label>Heater</label>
-        <div class="seg" id="heater-seg">
-          <button type="button" data-heater="auto">Auto</button>
-          <button type="button" data-heater="off">Off</button>
-          <button type="button" data-heater="on">On</button>
-        </div>
-      </div>
-      <div class="field">
-        <label>Humidifier</label>
-        <div class="seg" id="humid-seg">
-          <button type="button" data-humid="auto">Auto</button>
-          <button type="button" data-humid="off">Off</button>
-          <button type="button" data-humid="on">On</button>
-        </div>
-      </div>
-      <button id="apply">Send commands</button>
-      <span class="spacer"></span>
-      <button id="power" class="ghost">Stop</button>
     </div>
   </div>
 
@@ -301,10 +431,15 @@
     const statusEl = $("status");
     const tempInput = $("in-temp"), humInput = $("in-hum");
     const ceilInput = $("in-ceil"), dsMaxInput = $("in-ds-max");
+    const hystInput = $("in-hyst"), fanAfterHeatInput = $("in-fan-after-heat");
+    const maxHeatInput = $("in-max-heat"), heatCooldownInput = $("in-heat-cooldown");
+    const fanHeatInput = $("in-fan-heat"), fanHumidInput = $("in-fan-humid"), fanAutoInput = $("in-fan-auto");
     const fanInput = $("in-fan"), runHoursInput = $("in-run-hours"), runMinutesInput = $("in-run-minutes");
     const powerBtn = $("power");
     const alertEl = $("alert");
     let halted = false;         // last reported halted state, drives the power button
+    let runComplete = false;    // last reported run-complete, so we chime only on the edge
+    let runCompleteSeeded = false; // skip the chime on the first retained state we receive
     let fanMode = "auto";
     let heaterOverride = "auto";
     let humidOverride = "auto";
@@ -314,8 +449,106 @@
     // stop seeding it from fermenter/state, so the ~1 Hz state echo can't clobber
     // a value mid-edit. Cleared on Send commands, after which the device echo re-syncs it.
     const dirty = new Set();
-    [tempInput, humInput, ceilInput, dsMaxInput, fanInput, runHoursInput, runMinutesInput].forEach((el) =>
-      el.addEventListener("input", () => dirty.add(el.id)));
+    const dirtyFieldByKey = new Map();
+
+    function registerDirtyField(key, el) {
+      const field = el && el.closest(".field");
+      if (field) dirtyFieldByKey.set(key, field);
+    }
+
+    [
+      tempInput, humInput, ceilInput, dsMaxInput, hystInput, fanAfterHeatInput,
+      maxHeatInput, heatCooldownInput, fanHeatInput, fanHumidInput, fanAutoInput,
+      fanInput, runHoursInput, runMinutesInput,
+    ].forEach((el) => registerDirtyField(el.id, el));
+    registerDirtyField("control-sensor", $("control-sensor-seg"));
+    registerDirtyField("fan-mode", $("fan-seg"));
+    registerDirtyField("heater", $("heater-seg"));
+    registerDirtyField("humid", $("humid-seg"));
+
+    function almostEqual(a, b, eps = 0.001) {
+      return Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= eps;
+    }
+
+    function numberInput(el) {
+      if (el.value.trim() === "") return NaN;
+      const n = Number(el.value);
+      return Number.isFinite(n) ? n : NaN;
+    }
+
+    function numberChanged(el, baseline, fallback = null) {
+      const base = baseline == null ? fallback : baseline;
+      if (base == null) return el.value.trim() !== "";
+      return !almostEqual(numberInput(el), base);
+    }
+
+    function intChanged(el, baseline, fallback, min, max) {
+      if (baseline == null && el.value.trim() === "") return false;
+      return intInRange(el.value, fallback, min, max) !== baseline;
+    }
+
+    function currentRunMinutes() {
+      return (
+        intInRange(runHoursInput.value, 0, 0, 100000) * 60 +
+        intInRange(runMinutesInput.value, 0, 0, 59)
+      );
+    }
+
+    function currentFanManualPct() {
+      return fanMode === "auto" ? -1 : intInRange(fanInput.value, 0, 0, 100);
+    }
+
+    function setDirtyIf(key, changed) {
+      if (changed) dirty.add(key);
+    }
+
+    function recomputeDirty() {
+      dirty.clear();
+      setDirtyIf("in-temp", numberChanged(tempInput, sp.targetTemp));
+      setDirtyIf("in-hum", numberChanged(humInput, sp.targetHumidity));
+      setDirtyIf("in-ceil", numberChanged(ceilInput, sp.targetCeiling));
+      setDirtyIf("in-ds-max", numberChanged(dsMaxInput, sp.dsMaxOverTarget, 0));
+      setDirtyIf("in-hyst", numberChanged(hystInput, sp.hysteresis));
+      setDirtyIf("in-fan-after-heat", intChanged(fanAfterHeatInput, sp.fanAfterHeatSec, 0, 0, 3600));
+      setDirtyIf("in-max-heat", intChanged(maxHeatInput, sp.maxHeatMin, 1, 1, 600));
+      setDirtyIf("in-heat-cooldown", intChanged(heatCooldownInput, sp.heatCooldownMin, 0, 0, 600));
+      setDirtyIf("in-fan-heat", intChanged(fanHeatInput, sp.fanHeatPct, 100, 0, 100));
+      setDirtyIf("in-fan-humid", intChanged(fanHumidInput, sp.fanHumidPct, 70, 0, 100));
+      setDirtyIf("in-fan-auto", intChanged(fanAutoInput, sp.fanAutoPct, 50, 0, 100));
+      setDirtyIf("control-sensor", controlSensor !== (sp.controlSensor || "ds"));
+      const fanChanged = currentFanManualPct() !== (sp.fanManualPct == null ? -1 : sp.fanManualPct);
+      setDirtyIf("fan-mode", fanChanged);
+      if (fanMode !== "auto") setDirtyIf("in-fan", fanChanged);
+      const runChanged = currentRunMinutes() !== Math.max(0, sp.runMinutes == null ? 0 : sp.runMinutes);
+      setDirtyIf("in-run-hours", runChanged);
+      setDirtyIf("in-run-minutes", runChanged);
+      setDirtyIf("heater", heaterOverride !== (sp.heaterOverride || "auto"));
+      setDirtyIf("humid", humidOverride !== (sp.humidOverride || "auto"));
+      renderDirtyControls();
+    }
+
+    function renderDirtyControls() {
+      document.querySelectorAll(".field.changed").forEach((el) => el.classList.remove("changed"));
+      dirty.forEach((key) => dirtyFieldByKey.get(key)?.classList.add("changed"));
+      const count = dirty.size;
+      const apply = $("apply");
+      apply.disabled = count === 0;
+      apply.classList.toggle("has-changes", count > 0);
+      apply.textContent = count === 0 ? "No changes" : `Send ${count} change${count === 1 ? "" : "s"}`;
+    }
+
+    function clearDirtyControls() {
+      dirty.clear();
+      renderDirtyControls();
+    }
+
+    [
+      tempInput, humInput, ceilInput, dsMaxInput, hystInput, fanAfterHeatInput,
+      maxHeatInput, heatCooldownInput, fanHeatInput, fanHumidInput, fanAutoInput,
+      fanInput, runHoursInput, runMinutesInput,
+    ].forEach((el) =>
+      el.addEventListener("input", recomputeDirty));
+    renderDirtyControls();
 
     function setStatus(text, up) {
       statusEl.textContent = text;
@@ -325,6 +558,39 @@
     function setSegmentActive(attr, value) {
       document.querySelectorAll(`[${attr}]`).forEach((b) =>
         b.classList.toggle("active", b.getAttribute(attr) === value));
+    }
+
+    // ---- "run finished" chime --------------------------------------------
+    // Synthesised with the Web Audio API (no asset to ship). Browsers block audio
+    // until a user gesture, so we lazily create the context and resume it on the
+    // first interaction with the page; by the time a run completes it's unlocked.
+    let audioCtx = null;
+    function unlockAudio() {
+      try {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === "suspended") audioCtx.resume();
+      } catch { /* audio unavailable — chime just won't play */ }
+    }
+    addEventListener("pointerdown", unlockAudio, { once: false });
+
+    function playDoneChime() {
+      if (!audioCtx) return;            // never unlocked (no gesture yet)
+      const now = audioCtx.currentTime;
+      // A short rising three-note motif, repeated once.
+      [880, 1108.73, 1318.51, 0, 880, 1318.51].forEach((freq, i) => {
+        if (!freq) return;
+        const t = now + i * 0.18;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.0001, t);
+        gain.gain.exponentialRampToValueAtTime(0.25, t + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+        osc.connect(gain).connect(audioCtx.destination);
+        osc.start(t);
+        osc.stop(t + 0.18);
+      });
     }
 
     // ---- uPlot: charts ---------------------------------------------------
@@ -351,7 +617,13 @@
     const xAxis = () => ({ stroke: "#8b929f", grid: GRID, ticks: GRID });
 
     // Latest setpoints from fermenter/state; the threshold lines read these.
-    const sp = { targetTemp: null, targetHumidity: null, targetCeiling: null, dsMaxOverTarget: null };
+    const sp = {
+      targetTemp: null, targetHumidity: null, targetCeiling: null, dsMaxOverTarget: null,
+      hysteresis: null, fanAfterHeatSec: null, maxHeatMin: null, heatCooldownMin: null,
+      fanHeatPct: null, fanHumidPct: null, fanAutoPct: null,
+      controlSensor: null, fanManualPct: null, runMinutes: null,
+      heaterOverride: null, humidOverride: null,
+    };
 
     // y-range that always includes a (dynamic) target value, so the setpoint
     // line stays on-screen even while the reading is still far from target.
@@ -552,6 +824,57 @@
       uHumid.setData([xsAct, humidDuty]);
     }
 
+    function findField(d, keys) {
+      for (const key of keys) {
+        if (Object.prototype.hasOwnProperty.call(d, key) && d[key] != null) {
+          return { key, value: d[key] };
+        }
+      }
+      return null;
+    }
+
+    function minutesFromDuration(key, value) {
+      if (typeof value !== "number" || !Number.isFinite(value)) return null;
+      const k = key.toLowerCase();
+      if (k.includes("ms") || (k.endsWith("time") && Math.abs(value) > 100000)) {
+        return value / 60000;
+      }
+      if (k.includes("sec") || (k.endsWith("time") && Math.abs(value) > 1440)) {
+        return value / 60;
+      }
+      return value;
+    }
+
+    function formatDurationField(entry) {
+      if (!entry) return "–";
+      if (typeof entry.value === "string" && entry.value.trim()) return entry.value;
+      const minutes = minutesFromDuration(entry.key, entry.value);
+      if (minutes == null) return "–";
+      const rounded = Math.max(0, Math.round(minutes));
+      const h = Math.floor(rounded / 60);
+      const m = rounded % 60;
+      return h > 0 ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}m`;
+    }
+
+    function applyTimeFields(d) {
+      const setEntry = findField(d, [
+        "setTime", "set_time", "setMinutes", "setMin", "runtimeMinutes",
+        "runLimitMinutes", "runMinutes",
+      ]);
+      const upEntry = findField(d, [
+        "upTime", "uptime", "up_time", "uptimeMinutes", "upMinutes",
+        "elapsedMinutes", "elapsedMin", "runElapsed", "runElapsedMinutes",
+      ]);
+      const leftEntry = findField(d, [
+        "leftTime", "left_time", "leftMinutes", "leftMin", "remainingMinutes",
+        "remainingMin", "runRemaining", "runRemainingMinutes",
+      ]);
+
+      $("v-time-set").textContent = formatDurationField(setEntry);
+      $("v-time-up").textContent = formatDurationField(upEntry);
+      $("v-time-left").textContent = formatDurationField(leftEntry);
+    }
+
     // ---- state: status cards + seed controls (without fighting the user) -
     function applyState(d) {
       pushActuatorPoint(d);
@@ -563,6 +886,7 @@
       $("v-fan").textContent      = d.fanDuty;
       $("dot-heater").classList.toggle("on", d.heaterOn);
       $("dot-humid").classList.toggle("on", d.humidOn);
+      applyTimeFields(d);
 
       if (!dirty.has("heater")) {
         heaterOverride = d.heaterOverride || "auto";
@@ -583,7 +907,26 @@
       sp.targetHumidity = d.targetHumidity;
       sp.targetCeiling = d.targetCeiling;
       sp.dsMaxOverTarget = d.dsMaxOverTarget;
+      sp.hysteresis = d.hysteresis;
+      sp.fanAfterHeatSec = d.fanAfterHeatSec;
+      sp.maxHeatMin = d.maxHeatMin;
+      sp.heatCooldownMin = d.heatCooldownMin;
+      sp.fanHeatPct = d.fanHeatPct;
+      sp.fanHumidPct = d.fanHumidPct;
+      sp.fanAutoPct = d.fanAutoPct;
+      sp.controlSensor = d.controlSensor || "ds";
+      sp.fanManualPct = d.fanManualPct == null ? -1 : d.fanManualPct;
+      sp.runMinutes = Math.max(0, d.runMinutes == null ? 0 : d.runMinutes);
+      sp.heaterOverride = d.heaterOverride || "auto";
+      sp.humidOverride = d.humidOverride || "auto";
       uTemp.redraw(true, true); uHum.redraw(true, true); // recalc axes -> re-frame
+
+      // Chime once on the run-complete edge (timer reached zero). The first
+      // retained state only seeds the baseline so we don't beep on page load.
+      const nowComplete = !!d.runComplete;
+      if (runCompleteSeeded && nowComplete && !runComplete) playDoneChime();
+      runComplete = nowComplete;
+      runCompleteSeeded = true;
 
       halted = d.halted;
       $("v-halted").textContent = halted ? "⏸ Halted" : "▶ Running";
@@ -595,6 +938,13 @@
       if (!dirty.has("in-hum"))  humInput.value  = d.targetHumidity;
       if (!dirty.has("in-ceil")) ceilInput.value = d.targetCeiling;
       if (!dirty.has("in-ds-max")) dsMaxInput.value = d.dsMaxOverTarget ?? 0;
+      if (!dirty.has("in-hyst")) hystInput.value = d.hysteresis ?? "";
+      if (!dirty.has("in-fan-after-heat")) fanAfterHeatInput.value = d.fanAfterHeatSec ?? "";
+      if (!dirty.has("in-max-heat")) maxHeatInput.value = d.maxHeatMin ?? "";
+      if (!dirty.has("in-heat-cooldown")) heatCooldownInput.value = d.heatCooldownMin ?? "";
+      if (!dirty.has("in-fan-heat")) fanHeatInput.value = d.fanHeatPct ?? "";
+      if (!dirty.has("in-fan-humid")) fanHumidInput.value = d.fanHumidPct ?? "";
+      if (!dirty.has("in-fan-auto")) fanAutoInput.value = d.fanAutoPct ?? "";
       if (!dirty.has("control-sensor")) {
         controlSensor = d.controlSensor || "ds";
         setSegmentActive("data-control-sensor", controlSensor);
@@ -612,6 +962,7 @@
         runHoursInput.value = Math.floor(runMinutes / 60);
         runMinutesInput.value = runMinutes % 60;
       }
+      recomputeDirty();
     }
 
     // ---- MQTT over WebSocket ---------------------------------------------
@@ -655,19 +1006,18 @@
         const max = input.max === "" ? Infinity : parseFloat(input.max);
         const next = Math.min(max, Math.max(min, parseFloat(input.value || 0) + step));
         input.value = Number.isInteger(step) ? next.toFixed(0) : next.toFixed(1);
-        dirty.add(input.id); // a stepper press is an edit too
         if (input.id === "in-fan") {
           fanMode = "manual";
           setSegmentActive("data-fan-mode", fanMode);
-          dirty.add("fan-mode");
         }
+        recomputeDirty(); // a stepper press is an edit too
       });
     });
 
     fanInput.addEventListener("input", () => {
       fanMode = "manual";
       setSegmentActive("data-fan-mode", fanMode);
-      dirty.add("fan-mode");
+      recomputeDirty();
     });
 
     function numberOr(value, fallback) {
@@ -683,7 +1033,7 @@
       b.addEventListener("click", () => {
         fanMode = b.dataset.fanMode;
         setSegmentActive("data-fan-mode", fanMode);
-        dirty.add("fan-mode");
+        recomputeDirty();
       });
     });
 
@@ -691,7 +1041,7 @@
       b.addEventListener("click", () => {
         controlSensor = b.dataset.controlSensor;
         setSegmentActive("data-control-sensor", controlSensor);
-        dirty.add("control-sensor");
+        recomputeDirty();
       });
     });
 
@@ -699,7 +1049,7 @@
       b.addEventListener("click", () => {
         heaterOverride = b.dataset.heater;
         setSegmentActive("data-heater", heaterOverride);
-        dirty.add("heater");
+        recomputeDirty();
       });
     });
 
@@ -707,33 +1057,53 @@
       b.addEventListener("click", () => {
         humidOverride = b.dataset.humid;
         setSegmentActive("data-humid", humidOverride);
-        dirty.add("humid");
+        recomputeDirty();
       });
     });
 
     $("apply").addEventListener("click", () => {
       // Confirmation is the fermenter/state echo, not this click.
+      if (dirty.size === 0) return;
+
+      const setpoint = {};
+      if (dirty.has("in-temp")) setpoint.targetTemp = numberOr(tempInput.value, sp.targetTemp);
+      if (dirty.has("in-hum")) setpoint.targetHumidity = numberOr(humInput.value, sp.targetHumidity);
+      if (dirty.has("in-ceil")) setpoint.targetCeiling = numberOr(ceilInput.value, sp.targetCeiling);
+      if (dirty.has("in-ds-max")) setpoint.dsMaxOverTarget = numberOr(dsMaxInput.value, sp.dsMaxOverTarget);
+      if (dirty.has("in-hyst")) setpoint.hysteresis = numberOr(hystInput.value, sp.hysteresis ?? 0.1);
+      if (dirty.has("in-fan-after-heat")) setpoint.fanAfterHeatSec = intInRange(fanAfterHeatInput.value, sp.fanAfterHeatSec ?? 0, 0, 3600);
+      if (dirty.has("in-max-heat")) setpoint.maxHeatMin = intInRange(maxHeatInput.value, sp.maxHeatMin ?? 1, 1, 600);
+      if (dirty.has("in-heat-cooldown")) setpoint.heatCooldownMin = intInRange(heatCooldownInput.value, sp.heatCooldownMin ?? 0, 0, 600);
+      if (dirty.has("in-fan-heat")) setpoint.fanHeatPct = intInRange(fanHeatInput.value, sp.fanHeatPct ?? 100, 0, 100);
+      if (dirty.has("in-fan-humid")) setpoint.fanHumidPct = intInRange(fanHumidInput.value, sp.fanHumidPct ?? 70, 0, 100);
+      if (dirty.has("in-fan-auto")) setpoint.fanAutoPct = intInRange(fanAutoInput.value, sp.fanAutoPct ?? 50, 0, 100);
+      if (dirty.has("control-sensor")) setpoint.controlSensor = controlSensor;
+      if (dirty.has("fan-mode") || dirty.has("in-fan")) {
+        setpoint.fanManualPct = fanMode === "auto" ? -1 : intInRange(fanInput.value, 0, 0, 100);
+      }
       const runtimeMinutes =
         intInRange(runHoursInput.value, 0, 0, 100000) * 60 +
         intInRange(runMinutesInput.value, 0, 0, 59);
-      client.publish("fermenter/cmd/setpoint", JSON.stringify({
-        targetTemp: numberOr(tempInput.value, sp.targetTemp),
-        targetHumidity: numberOr(humInput.value, sp.targetHumidity),
-        targetCeiling: numberOr(ceilInput.value, sp.targetCeiling),
-        dsMaxOverTarget: numberOr(dsMaxInput.value, sp.dsMaxOverTarget),
-        controlSensor,
-        fanManualPct: fanMode === "auto" ? -1 : intInRange(fanInput.value, 0, 0, 100),
-        runMinutes: runtimeMinutes,
-      }));
+      if (dirty.has("in-run-hours") || dirty.has("in-run-minutes")) {
+        setpoint.runMinutes = runtimeMinutes;
+      }
 
-      client.publish("fermenter/cmd/control", JSON.stringify({
-        action: heaterOverride === "auto" ? "heater_auto" : `heater_${heaterOverride}`,
-      }));
-      client.publish("fermenter/cmd/control", JSON.stringify({
-        action: humidOverride === "auto" ? "humidifier_auto" : `humidifier_${humidOverride}`,
-      }));
+      if (Object.keys(setpoint).length > 0) {
+        client.publish("fermenter/cmd/setpoint", JSON.stringify(setpoint));
+      }
 
-      dirty.clear(); // hand the fields back to the device's echoed truth
+      if (dirty.has("heater")) {
+        client.publish("fermenter/cmd/control", JSON.stringify({
+          action: heaterOverride === "auto" ? "heater_auto" : `heater_${heaterOverride}`,
+        }));
+      }
+      if (dirty.has("humid")) {
+        client.publish("fermenter/cmd/control", JSON.stringify({
+          action: humidOverride === "auto" ? "humidifier_auto" : `humidifier_${humidOverride}`,
+        }));
+      }
+
+      clearDirtyControls(); // hand the fields back to the device's echoed truth
     });
 
     powerBtn.addEventListener("click", () => {

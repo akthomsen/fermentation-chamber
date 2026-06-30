@@ -24,6 +24,12 @@ struct Setpoints
     int fanManualPct = -1;       // FAN_MANUAL_AUTO (-1) = AUTO (conditioning-driven); 0..100 = manual duty %
     ControlSensor controlSensor = CONTROL_SENSOR_DS;
 
+    // AUTO-mode fan duties (defaults from Config.h). Picked by what is being
+    // conditioned: heater running, humidifier running, or just circulating.
+    int fanHeatPct = FAN_DUTY_MAX_PCT;    // duty % while heater on / after-heat hold
+    int fanHumidPct = FAN_DUTY_HUMID_PCT; // duty % while humidifier on
+    int fanAutoPct = FAN_DUTY_MIN_PCT;    // duty % for the always-on circulation floor
+
     // Advanced control tuning (defaults from Config.h). Human units; Controller
     // converts to the millisecond timers it runs on.
     float hysteresis = HYSTERESIS;                            // control dead-band, degrees C
