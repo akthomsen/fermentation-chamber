@@ -101,14 +101,16 @@ app = FastAPI(lifespan=lifespan)
 influx = InfluxDBClient(url=URL, token=TOKEN, org=ORG)
 
 
-def _series(hours: int, measurement: str, fields: list[str]) -> dict:
+def _series(hours: float, measurement: str, fields: list[str]) -> dict:
     """Pivot the given fields of one measurement into parallel arrays:
     {"t": [...timestamps], field: [...values], ...}. Missing samples come
     back as None so the frontend keeps every series aligned to `t`."""
+    seconds = int(round(hours * 3600))
+
     field_filter = " or ".join(f'r._field == "{f}"' for f in fields)
     flux = f'''
     from(bucket: "{BUCKET}")
-      |> range(start: -{hours}h)
+      |> range(start: -{seconds}s)
       |> filter(fn: (r) => r._measurement == "{measurement}")
       |> filter(fn: (r) => {field_filter})
       |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
@@ -131,7 +133,7 @@ def _series(hours: int, measurement: str, fields: list[str]) -> dict:
 
 
 @app.get("/api/history")
-def history(hours: int = Query(6, ge=1, le=168)):
+def history(hours: float = Query(1, ge=0.099, le=168)):
     # Two measurements, two timelines: telemetry (sensors) and state
     # (actuators). Telegraf writes them separately, so the browser backfills
     # each chart group from its own series.

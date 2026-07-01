@@ -6,7 +6,7 @@ import { $, fmtTime, fmtValue, onOff } from "./util.js";
 // One field governs every chart: how many hours back to show. It sets both the
 // visible sliding window and how much history we backfill / retain.
 const historyInput = $("in-history-hours");
-let historyHours = Math.min(168, Math.max(1, Math.round(Number(historyInput.value) || 6)));
+let historyHours = Math.min(168, Math.max(0.1, Number(historyInput.value || 1)));
 let windowSec = historyHours * 3600;
 
 let xs = [], tIn = [], tAmb = [], hum = [];
@@ -303,7 +303,7 @@ backfill();   // runs once at startup; live MQTT points append on top
 
 // Changing the History field reframes and refetches every chart.
 historyInput.addEventListener("change", () => {
-  historyHours = Math.min(168, Math.max(1, Math.round(Number(historyInput.value) || historyHours)));
+  historyHours = Math.min(168, Math.max(0.1, Number(historyInput.value || historyHours)));
   historyInput.value = historyHours;
   windowSec = historyHours * 3600;
   backfill();
