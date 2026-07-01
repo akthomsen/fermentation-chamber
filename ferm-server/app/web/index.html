@@ -61,6 +61,27 @@
       color: var(--bad);
     }
 
+    .history-field {
+      margin-left: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: .85rem;
+      color: var(--muted);
+    }
+
+    .history-field input {
+      width: 60px;
+      text-align: center;
+      background: var(--bg);
+      color: var(--txt);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 4px 6px;
+      font-size: .9rem;
+      font-variant-numeric: tabular-nums;
+    }
+
     .grid {
       display: grid;
       gap: 12px;
@@ -443,6 +464,9 @@
   <header>
     <h1>Fermentation chamber</h1>
     <span id="status" class="down">connecting…</span>
+    <label class="history-field" for="in-history-hours">History
+      <input id="in-history-hours" type="number" min="1" max="168" step="1" value="6"> h
+    </label>
   </header>
 
   <!-- Active fault from the digital twin (retained fermenter/alert) -->
@@ -922,23 +946,27 @@
     }
 
     // ---- uPlot: charts ---------------------------------------------------
-    const WINDOW_SEC = 300;     // sliding view width: always show the last 5 min
-    const MAX = 1800;           // hard cap on retained points (~30 min @ 1 msg/s)
+    // One field governs every chart: how many hours back to show. It sets both
+    // the visible sliding window and how much history we backfill / retain.
+    const historyInput = $("in-history-hours");
+    let historyHours = Math.min(168, Math.max(1, Math.round(Number(historyInput.value) || 6)));
+    let windowSec = historyHours * 3600;
     let xs = [], tIn = [], tAmb = [], hum = [];
     let xsAct = [], fanDuty = [], heaterDuty = [], humidDuty = [];
 
     const GRID = { stroke: "#2a2f3a" };
     function chartWidth(cardId) { return Math.max(280, $(cardId).clientWidth - 26); }
 
-    // Both charts share one sliding x-range: [latest - WINDOW, latest]. This is
-    // what makes the plot scroll instead of staying pinned to session start.
+    // Both chart groups share one sliding x-range: [latest - windowSec, latest].
+    // This is what makes the plot scroll instead of staying pinned to session
+    // start, and windowSec is what the History field controls.
     function xRange() {
       const last = xs.length ? xs[xs.length - 1] : Date.now() / 1000;
-      return [last - WINDOW_SEC, last];
+      return [last - windowSec, last];
     }
     function xRangeAct() {
       const last = xsAct.length ? xsAct[xsAct.length - 1] : Date.now() / 1000;
-      return [last - WINDOW_SEC, last];
+      return [last - windowSec, last];
     }
     const xScale = { time: true, range: () => xRange() };
     const xScaleAct = { time: true, range: () => xRangeAct() };
@@ -1141,11 +1169,29 @@
       });
     });
 
+    // ---- point buffers ---------------------------------------------------
+    // Drop points older than the visible window (plus a little slack so the
+    // left edge isn't blank) from the front of each parallel array. Bounding by
+    // time rather than count keeps memory tied to the chosen History span.
+    function dropOld(x, ...series) {
+      const cutoff = Date.now() / 1000 - windowSec - 30;
+      let n = 0;
+      while (n < x.length && x[n] < cutoff) n++;
+      if (n) { x.splice(0, n); series.forEach((s) => s.splice(0, n)); }
+    }
+
+    // Replace an array's contents in place, so uPlot series / cursor-readout
+    // closures that captured the array reference keep pointing at live data.
+    function refill(arr, values) {
+      arr.length = 0;
+      for (let i = 0; i < values.length; i++) arr.push(values[i]);
+    }
+
     // ---- telemetry: live points ------------------------------------------
     function pushPoint(d) {
       xs.push(Date.now() / 1000);
       tIn.push(d.dsTemp); tAmb.push(d.bmeTemp); hum.push(d.humidity);
-      if (xs.length > MAX) { xs.shift(); tIn.shift(); tAmb.shift(); hum.shift(); }
+      dropOld(xs, tIn, tAmb, hum);
       uTemp.setData([xs, tIn, tAmb]);
       uHum.setData([xs, hum]);
       $("v-temp").textContent = d.dsTemp.toFixed(2);
@@ -1157,7 +1203,7 @@
       fanDuty.push(d.fanDuty ?? 0);
       heaterDuty.push(d.heaterOn ? 1 : 0);
       humidDuty.push(d.humidOn ? 1 : 0);
-      if (xsAct.length > MAX) { xsAct.shift(); fanDuty.shift(); heaterDuty.shift(); humidDuty.shift(); }
+      dropOld(xsAct, fanDuty, heaterDuty, humidDuty);
       uFan.setData([xsAct, fanDuty]);
       uHeater.setData([xsAct, heaterDuty]);
       uHumid.setData([xsAct, humidDuty]);
@@ -1304,19 +1350,38 @@
       recomputeDirty();
     }
 
-    async function backfill(hours = 6) {
+    // Load the selected window of history into every chart. Both the sensor
+    // charts (telemetry) and the actuator charts (state) are backfilled; live
+    // MQTT points append on top. Arrays are refilled in place so uPlot keeps
+    // its references. Booleans (heater/humid on) become 1/0 for plotting.
+    async function backfill() {
       try {
-        const h = await (await fetch(`/api/history?hours=${hours}`)).json();
-        xs = h.t; tIn = h.dsTemp; tAmb = h.bmeTemp; hum = h.humidity;
-        if (xs.length > MAX) {              // respect the in-memory cap
-          const s = xs.length - MAX;
-          xs = xs.slice(s); tIn = tIn.slice(s); tAmb = tAmb.slice(s); hum = hum.slice(s);
-        }
+        const h = await (await fetch(`/api/history?hours=${historyHours}`)).json();
+        const tel = h.telemetry || {}, st = h.state || {};
+        refill(xs, tel.t || []);
+        refill(tIn, tel.dsTemp || []);
+        refill(tAmb, tel.bmeTemp || []);
+        refill(hum, tel.humidity || []);
+        refill(xsAct, st.t || []);
+        refill(fanDuty, (st.fanDuty || []).map((v) => v ?? 0));
+        refill(heaterDuty, (st.heaterOn || []).map((v) => (v ? 1 : 0)));
+        refill(humidDuty, (st.humidOn || []).map((v) => (v ? 1 : 0)));
         uTemp.setData([xs, tIn, tAmb]);
         uHum.setData([xs, hum]);
+        uFan.setData([xsAct, fanDuty]);
+        uHeater.setData([xsAct, heaterDuty]);
+        uHumid.setData([xsAct, humidDuty]);
       } catch (_) { /* API unreachable — live data still works */ }
     }
     backfill();   // runs once at startup; live MQTT points append on top
+
+    // Changing the History field reframes and refetches every chart.
+    historyInput.addEventListener("change", () => {
+      historyHours = Math.min(168, Math.max(1, Math.round(Number(historyInput.value) || historyHours)));
+      historyInput.value = historyHours;
+      windowSec = historyHours * 3600;
+      backfill();
+    });
 
     // ---- live data: FastAPI WebSocket relay ------------------------------
     // The browser no longer speaks MQTT (no broker credential in this page).

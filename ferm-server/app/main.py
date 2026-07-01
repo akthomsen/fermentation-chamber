@@ -101,24 +101,39 @@ app = FastAPI(lifespan=lifespan)
 influx = InfluxDBClient(url=URL, token=TOKEN, org=ORG)
 
 
-@app.get("/api/history")
-def history(hours: int = Query(6, ge=1, le=168)):
+def _series(hours: int, measurement: str, fields: list[str]) -> dict:
+    """Pivot the given fields of one measurement into parallel arrays:
+    {"t": [...timestamps], field: [...values], ...}. Missing samples come
+    back as None so the frontend keeps every series aligned to `t`."""
+    field_filter = " or ".join(f'r._field == "{f}"' for f in fields)
     flux = f'''
     from(bucket: "{BUCKET}")
       |> range(start: -{hours}h)
-      |> filter(fn: (r) => r._measurement == "telemetry")
-      |> filter(fn: (r) => r._field == "dsTemp" or r._field == "bmeTemp" or r._field == "humidity")
+      |> filter(fn: (r) => r._measurement == "{measurement}")
+      |> filter(fn: (r) => {field_filter})
       |> pivot(rowKey: ["_time"], columnKey: ["_field"], valueColumn: "_value")
       |> sort(columns: ["_time"])
     '''
-    out = {"t": [], "dsTemp": [], "bmeTemp": [], "humidity": []}
+    out: dict = {"t": []}
+    for f in fields:
+        out[f] = []
     for table in influx.query_api().query(flux):
         for rec in table.records:
             out["t"].append(rec["_time"].timestamp())
-            out["dsTemp"].append(rec.values.get("dsTemp"))
-            out["bmeTemp"].append(rec.values.get("bmeTemp"))
-            out["humidity"].append(rec.values.get("humidity"))
+            for f in fields:
+                out[f].append(rec.values.get(f))
     return out
+
+
+@app.get("/api/history")
+def history(hours: int = Query(6, ge=1, le=168)):
+    # Two measurements, two timelines: telemetry (sensors) and state
+    # (actuators). Telegraf writes them separately, so the browser backfills
+    # each chart group from its own series.
+    return {
+        "telemetry": _series(hours, "telemetry", ["dsTemp", "bmeTemp", "humidity"]),
+        "state": _series(hours, "state", ["fanDuty", "heaterOn", "humidOn"]),
+    }
 
 
 @app.websocket("/ws")
