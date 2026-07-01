@@ -369,6 +369,19 @@ button.ghost {
   border: 1px solid var(--line);
 }
 
+/* Compact header opt-in button, sized to sit on the header baseline. */
+#notify-btn {
+  align-self: center;
+  padding: 4px 10px;
+  font-size: .8rem;
+  border-radius: 8px;
+}
+
+#notify-btn[data-on="1"] {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
 .seg {
   display: flex;
   align-items: stretch;

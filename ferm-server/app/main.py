@@ -2,13 +2,17 @@ import asyncio
 import json
 import logging
 import os
+import pathlib
+import sqlite3
+import time
 from contextlib import asynccontextmanager
 
 import paho.mqtt.client as mqtt
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
 from influxdb_client import InfluxDBClient
 from pydantic import BaseModel
+from pywebpush import WebPushException, webpush
 
 log = logging.getLogger("uvicorn.error")
 
@@ -26,6 +30,127 @@ MQTT_PASS = os.environ["MQTT_PASS"]
 
 # Read side: topics relayed verbatim to connected browsers.
 RELAY_TOPICS = ("fermenter/telemetry", "fermenter/state", "fermenter/alert")
+
+
+# --- web push -----------------------------------------------------------------
+# The browser registers once for Web Push; thereafter the backend pushes
+# notifications straight to the browser's push service, even with the page shut.
+# VAPID is the signing keypair that authorises us to that service: the public
+# key is handed to the browser, the private key never leaves here. If the keys
+# are absent the app still runs — push endpoints just report "not configured" —
+# so the dashboard is never held hostage to notification setup.
+VAPID_PUBLIC_KEY  = os.environ.get("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "")
+VAPID_SUBJECT     = os.environ.get("VAPID_SUBJECT", "mailto:admin@example.com")
+PUSH_ENABLED      = bool(VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY)
+PUSH_DB_PATH      = os.environ.get("PUSH_DB_PATH", "/app/data/app.db")
+
+
+def _db() -> sqlite3.Connection:
+    # A fresh connection per call keeps this trivially thread-safe: the sync
+    # endpoints run in FastAPI's threadpool and the alert path runs in an
+    # executor, so there is no single connection to share across threads.
+    pathlib.Path(PUSH_DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(PUSH_DB_PATH)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS subscriptions("
+        "endpoint TEXT PRIMARY KEY, sub TEXT NOT NULL, created REAL NOT NULL)"
+    )
+    return conn
+
+
+def save_subscription(sub: dict) -> None:
+    # Keyed by endpoint so re-subscribing the same browser updates in place
+    # rather than piling up duplicates.
+    with _db() as conn:
+        conn.execute(
+            "INSERT INTO subscriptions(endpoint, sub, created) VALUES(?, ?, ?) "
+            "ON CONFLICT(endpoint) DO UPDATE SET sub=excluded.sub",
+            (sub["endpoint"], json.dumps(sub), time.time()),
+        )
+
+
+def delete_subscription(endpoint: str) -> None:
+    with _db() as conn:
+        conn.execute("DELETE FROM subscriptions WHERE endpoint=?", (endpoint,))
+
+
+def load_subscriptions() -> list[dict]:
+    with _db() as conn:
+        rows = conn.execute("SELECT sub FROM subscriptions").fetchall()
+    return [json.loads(r[0]) for r in rows]
+
+
+def _send_one(sub: dict, payload: dict) -> bool:
+    try:
+        webpush(
+            subscription_info=sub,
+            data=json.dumps(payload),
+            vapid_private_key=VAPID_PRIVATE_KEY,
+            vapid_claims={"sub": VAPID_SUBJECT},
+        )
+        return True
+    except WebPushException as e:
+        # 404/410 mean the browser dropped the subscription (uninstalled, expired
+        # push, cleared data). Prune it so it stops counting as a failure.
+        status = getattr(e.response, "status_code", None)
+        if status in (404, 410):
+            delete_subscription(sub.get("endpoint", ""))
+            log.info("push subscription gone (%s), removed", status)
+        else:
+            log.warning("push failed: %s", e)
+        return False
+
+
+def send_push_to_all(payload: dict) -> dict:
+    """Blocking: fan a notification out to every stored subscription. Called
+    from the threadpool (endpoints) or an executor (alert path), never on the
+    event loop."""
+    if not PUSH_ENABLED:
+        log.warning("push requested but VAPID keys are not configured")
+        return {"sent": 0, "failed": 0, "detail": "push not configured"}
+    subs = load_subscriptions()
+    sent = sum(1 for s in subs if _send_one(s, payload))
+    return {"sent": sent, "failed": len(subs) - sent}
+
+
+# Alert -> push, de-duplicated. fermenter/alert is retained and singular (one
+# active fault at a time), so a naive "push on every message" would re-fire on
+# broker reconnects and on each unchanged repeat. We push only when the fault is
+# new, escalates in severity, or a cooldown has lapsed (a gentle reminder that a
+# fault is still live) — never a storm from one stuck sensor.
+_SEV_RANK = {"info": 0, "warning": 1, "critical": 2}
+_alert_state = {"code": None, "sev": -1, "at": 0.0}
+ALERT_COOLDOWN = float(os.environ.get("ALERT_COOLDOWN_SEC", "900"))
+
+
+def notify_alert(payload: str) -> None:
+    a = None
+    if payload:
+        try:
+            a = json.loads(payload)
+        except Exception:
+            a = None
+    # Empty payload / active:false clears the fault (matches the frontend banner).
+    if not a or a.get("active") is False:
+        _alert_state.update(code=None, sev=-1, at=0.0)
+        return
+    code = a.get("code") or "ALERT"
+    sev = _SEV_RANK.get(a.get("severity"), 1)
+    now = time.time()
+    if not (code != _alert_state["code"]
+            or sev > _alert_state["sev"]
+            or now - _alert_state["at"] > ALERT_COOLDOWN):
+        return
+    _alert_state.update(code=code, sev=sev, at=now)
+    title = {2: "🔴 Fermenter critical", 1: "⚠️ Fermenter warning"}.get(
+        sev, "Fermentation chamber")
+    send_push_to_all({
+        "title": title,
+        "body": a.get("message") or code,
+        "tag": code,
+        "severity": a.get("severity") or "warning",
+    })
 
 
 # --- live relay: broker -> browsers -----------------------------------------
@@ -48,6 +173,11 @@ class Relay:
         while True:
             topic, payload = await self.queue.get()
             self.cache[topic] = payload
+            # A fault also becomes a phone notification. webpush blocks (it does
+            # sync HTTP to the push service), so hand it to the executor and let
+            # the fan-out below proceed without waiting on the network.
+            if topic == "fermenter/alert":
+                asyncio.get_running_loop().run_in_executor(None, notify_alert, payload)
             frame = json.dumps({"topic": topic, "payload": payload})
             for ws in list(self.clients):
                 try:
@@ -241,6 +371,46 @@ def command(cmd: Command):
         log.info("cmd control %s", action)
 
     return {"ok": True}
+
+
+# --- web push registration ---------------------------------------------------
+# The browser subscribes once (button in the dashboard), then the backend owns
+# delivery. These are sync `def` endpoints so FastAPI runs them in its
+# threadpool — safe for the blocking sqlite/webpush calls they make.
+class PushSub(BaseModel):
+    endpoint: str
+    keys: dict
+    expirationTime: float | None = None
+
+
+@app.get("/api/push/vapid-public-key")
+def vapid_public_key():
+    if not PUSH_ENABLED:
+        raise HTTPException(503, "push not configured")
+    return {"key": VAPID_PUBLIC_KEY}
+
+
+@app.post("/api/push/subscribe")
+def push_subscribe(sub: PushSub):
+    save_subscription(sub.model_dump(exclude_none=True))
+    return {"ok": True}
+
+
+@app.post("/api/push/unsubscribe")
+def push_unsubscribe(sub: PushSub):
+    delete_subscription(sub.endpoint)
+    return {"ok": True}
+
+
+@app.post("/api/push/test")
+def push_test():
+    # Verify the whole round-trip without waiting for a real fault.
+    return send_push_to_all({
+        "title": "Fermentation chamber",
+        "body": "Test notification — push is working.",
+        "tag": "test",
+        "severity": "info",
+    })
 
 
 # Serve the dashboard. Explicit routes above win over this mount.

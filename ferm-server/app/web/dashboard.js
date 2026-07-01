@@ -5,6 +5,7 @@ import { $ } from "./util.js";
 import { pushPoint } from "./charts.js";
 import { applyState } from "./controls.js";
 import { connectLive } from "./live.js";
+import { initNotifications } from "./notifications.js";
 
 // ---- alert: active fault banner from the twin -------------------------
 const alertEl = $("alert");
@@ -19,3 +20,6 @@ function applyAlert(raw) {
 }
 
 connectLive({ telemetry: pushPoint, state: applyState, alert: applyAlert });
+
+// Register the "Enable notifications" button (Web Push opt-in).
+initNotifications();

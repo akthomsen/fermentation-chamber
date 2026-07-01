@@ -54,5 +54,13 @@ services:
       - MQTT_PORT=1883
       - MQTT_USER=webui
       - MQTT_PASS=${MQTT_WEBUI_PASS}
+      # Web Push (VAPID). Generate once on the server and add to .env — see
+      # README. Absent keys just disable push; the dashboard still runs.
+      - VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY}
+      - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY}
+      - VAPID_SUBJECT=${VAPID_SUBJECT:-mailto:admin@example.com}
     volumes:
       - ./app/web:/app/web
+      # Persists browser push subscriptions (SQLite). Kept out of Influx, which
+      # is for time-series only, not application state.
+      - ./app/data:/app/data

@@ -1,0 +1,3 @@
+# Runtime state (push subscriptions), not source.
+app.db
+app.db-*
