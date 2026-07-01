@@ -117,11 +117,16 @@ def _series(hours: int, measurement: str, fields: list[str]) -> dict:
     out: dict = {"t": []}
     for f in fields:
         out[f] = []
-    for table in influx.query_api().query(flux):
-        for rec in table.records:
-            out["t"].append(rec["_time"].timestamp())
-            for f in fields:
-                out[f].append(rec.values.get(f))
+    try:
+        for table in influx.query_api().query(flux):
+            for rec in table.records:
+                out["t"].append(rec["_time"].timestamp())
+                for f in fields:
+                    out[f].append(rec.values.get(f))
+    except Exception:
+        # One measurement's query failing (e.g. a schema/type quirk) must not
+        # blank the others — return what we have and surface the cause.
+        log.exception("history query failed for measurement %s", measurement)
     return out
 
 
